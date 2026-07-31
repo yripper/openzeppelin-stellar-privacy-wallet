@@ -3,5 +3,6 @@ dist/
 .env
 resources/
 docs/superpowers/
+.superpowers/
 *.local
 .bb-crs/
