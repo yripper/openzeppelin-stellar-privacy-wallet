@@ -1,0 +1,13 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: grantfox
+      POSTGRES_PASSWORD: grantfox
+      POSTGRES_DB: grantfox
+    ports:
+      - "${DB_HOST_PORT:-5433}:5432"
+    volumes:
+      - dbdata:/var/lib/postgresql/data
+volumes:
+  dbdata:

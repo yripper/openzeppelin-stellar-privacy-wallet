@@ -1,0 +1,14 @@
+{
+  "name": "grantfox-privacy-wallet",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.15.0",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "dev": "pnpm --filter app dev",
+    "api": "pnpm --filter @grantfox/api dev",
+    "worker": "pnpm --filter @grantfox/api worker",
+    "test": "pnpm -r test",
+    "build": "pnpm -r build"
+  }
+}
