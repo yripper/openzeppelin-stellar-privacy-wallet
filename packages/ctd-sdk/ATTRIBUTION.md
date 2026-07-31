@@ -22,6 +22,7 @@ Everything under upstream `packages/sdk/`: `src/`, `circuits/` (including `circu
 Keep this list current — one entry per change made to vendored files, in this repo, since the copy above.
 
 1. **`package.json`** — bumped `"@stellar/stellar-sdk"` from `"^14.2.0"` to `"16.2.0"` (exact pin) to match the version this monorepo standardizes on for every package.
+2. **`package.json`** — added a `"./proving/artifacts"` subpath export (mirroring the existing `"./state/json-store"` one). `loadCircuit` is deliberately kept out of the browser-safe barrel (`src/proving/index.ts:1-4`), and upstream's own scripts reach it by relative source path — which consumers of the built package cannot do. No source change.
 
 No source-code fixes were required by the 14→16 bump: `pnpm --filter @ctd/sdk build` (`tsc -p tsconfig.json`) compiled clean with zero errors. The package's stellar-sdk usage is shallow — `Address`, `xdr` (`xdr.ScVal`, `nativeToScVal`, `scValToNative`), `rpc` (`src/chain/events.ts`, `src/chain/client.ts`) — all stable across the two major versions for these call sites.
 

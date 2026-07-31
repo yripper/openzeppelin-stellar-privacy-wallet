@@ -13,6 +13,10 @@
       "types": "./dist/state/json-store.d.ts",
       "import": "./dist/state/json-store.js"
     },
+    "./proving/artifacts": {
+      "types": "./dist/proving/artifacts.d.ts",
+      "import": "./dist/proving/artifacts.js"
+    },
     "./circuits/*": "./circuits/*"
   },
   "main": "./dist/index.js",

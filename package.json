@@ -9,6 +9,22 @@
     "api": "pnpm --filter @grantfox/api dev",
     "worker": "pnpm --filter @grantfox/api worker",
     "test": "pnpm -r test",
-    "build": "pnpm -r build"
+    "build": "pnpm -r build",
+    "smoke:ct": "tsx scripts/smoke-ct.ts"
+  },
+  "devDependencies": {
+    "@ctd/sdk": "workspace:*",
+    "@grantfox/shared": "workspace:*",
+    "@stellar/stellar-sdk": "16.2.0",
+    "@types/node": "^22.10.0",
+    "smart-account-kit": "0.4.2",
+    "smart-account-kit-bindings": "0.3.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.9.2"
+  },
+  "pnpm": {
+    "overrides": {
+      "@stellar/stellar-sdk": "16.2.0"
+    }
   }
 }

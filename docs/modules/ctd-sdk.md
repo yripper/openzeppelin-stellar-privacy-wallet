@@ -2,7 +2,7 @@
 
 > **Living document.** Read this before modifying the module. Update it in the same change whenever the module's behavior, endpoints, files, or dependencies change.
 
-**Source:** `packages/ctd-sdk/` · **Last verified:** 2026-07-31
+**Source:** `packages/ctd-sdk/` · **Last verified:** 2026-07-31 (added the `./proving/artifacts` subpath export)
 
 ## Purpose
 
@@ -14,7 +14,9 @@ This package is **vendored, not authored here** — see [Vendoring](#vendoring) 
 
 - Copied from `brozorec/stellar-confidential-token-demo` (upstream commit `ac67499a617c084b80c0e0298180b2c4faf9e2fb`), path `packages/sdk`. Full provenance and the running list of local modifications: `packages/ctd-sdk/ATTRIBUTION.md`.
 - The upstream repo itself lives at `resources/stellar-confidential-token-demo/` in this checkout but is **gitignored** (scratch reference only) — `packages/ctd-sdk/` is the tracked, buildable copy.
-- Local modification so far: `@stellar/stellar-sdk` bumped from upstream's `^14.2.0` to this monorepo's pinned `16.2.0` (`packages/ctd-sdk/package.json:35`). The bump required **zero source changes** — `tsc -p tsconfig.json` compiled clean; the package's stellar-sdk surface (`Address`, `xdr.ScVal`, `nativeToScVal`, `scValToNative`, `rpc`) is stable across 14→16 for the call sites used here.
+- Local modifications so far (authoritative list: `packages/ctd-sdk/ATTRIBUTION.md`), both `package.json`-only, **zero source changes**:
+  1. `@stellar/stellar-sdk` bumped from upstream's `^14.2.0` to this monorepo's pinned `16.2.0`. `tsc -p tsconfig.json` compiled clean; the package's stellar-sdk surface (`Address`, `xdr.ScVal`, `nativeToScVal`, `scValToNative`, `rpc`) is stable across 14→16 for the call sites used here.
+  2. Added a `"./proving/artifacts"` subpath export so built-package consumers can reach the Node-only `loadCircuit` (upstream's own scripts get at it by relative source path, which is not available to a workspace dependency).
 - Package name is kept as-is (`@ctd/sdk`, not renamed to a `@grantfox/*` scope) so upstream import paths and the vendored tests keep working unmodified. Consumers depend on it via `"@ctd/sdk": "workspace:*"`.
 
 ## Structure
@@ -51,22 +53,22 @@ This package is **vendored, not authored here** — see [Vendoring](#vendoring) 
 - `JsonFileStore` (Node-only, not in the barrel) — `packages/ctd-sdk/src/state/json-store.ts:13`, import via the `./state/json-store` package export
 - `fetchEvents(...)` — `packages/ctd-sdk/src/chain/events.ts:261`; `hybridFetchEvents(...)` — `packages/ctd-sdk/src/chain/event-source.ts:82`
 - `IndexerClient` (class) — `packages/ctd-sdk/src/chain/indexer.ts:61`
-- `loadCircuit(name)` (Node only, reads `circuits/<name>.json` off `import.meta.url`) — `packages/ctd-sdk/src/proving/artifacts.ts:20`
+- `loadCircuit(name)` (Node only, not in the barrel; reads `circuits/<name>.json` off `import.meta.url`) — `packages/ctd-sdk/src/proving/artifacts.ts:20`, import via the `@ctd/sdk/proving/artifacts` package export
 
-All of the above are re-exported from the package root (`packages/ctd-sdk/src/index.ts:15-21`) via `export * from "./<layer>/index.js"`, **except** `JsonFileStore`, which is only reachable via the `@ctd/sdk/state/json-store` subpath export (`packages/ctd-sdk/package.json:12-15`).
+All of the above are re-exported from the package root (`packages/ctd-sdk/src/index.ts:15-21`) via `export * from "./<layer>/index.js"`, **except** two Node-only entries that are deliberately kept out of the browser-safe barrels and reachable only via their own subpath exports (`packages/ctd-sdk/package.json:12-19`): `JsonFileStore` (`@ctd/sdk/state/json-store`) and `loadCircuit` (`@ctd/sdk/proving/artifacts`).
 
 ## Dependencies
 
 - `@stellar/stellar-sdk` — pinned `16.2.0` (this monorepo's standard, bumped from upstream's `^14.2.0`).
 - `@aztec/bb.js@0.87.0` — UltraHonk backend; fetches the Barretenberg CRS to `~/.bb-crs` on first proof (network required once, then cached; root `.gitignore` excludes `.bb-crs/`).
 - `@noir-lang/noir_js@1.0.0-beta.9`, `@noble/curves`, `@noble/hashes`, `@zkpassport/poseidon2` — circuit execution and crypto primitives, unchanged from upstream.
-- Consumed by: later tasks (4, 11 per the plan) that need Confidential Token proving/witness/encoding — via `"@ctd/sdk": "workspace:*"`.
+- Consumed by: `scripts/smoke-ct.ts` (gate #1 — witness/proving/encoding + `ChainClient`/`StateEngine`, see `docs/modules/ct-tx.md`) and the Task 11 browser CT rail — via `"@ctd/sdk": "workspace:*"`.
 
 ## Gotchas & invariants
 
 - **This is vendored code.** Don't apply this monorepo's usual style/refactor conventions to `src/`, `circuits/`, `contracts/`, `test/` — only touch what's needed to keep it compiling against pinned deps, and log every such change in `packages/ctd-sdk/ATTRIBUTION.md`.
 - `JsonFileStore` is deliberately excluded from the root barrel (`src/index.ts`) so the browser bundle never pulls in `node:fs` — import it from the `./state/json-store` subpath, not the package root (`packages/ctd-sdk/src/state/json-store.ts:1-5`).
-- `loadCircuit()` is Node-only (`readFileSync` off `import.meta.url`); browser code must import the `circuits/*.json` files directly through its bundler instead (`packages/ctd-sdk/src/proving/artifacts.ts:1-8`).
+- `loadCircuit()` is Node-only (`readFileSync` off `import.meta.url`) and is **not** in the `./proving/index.js` barrel (`packages/ctd-sdk/src/proving/index.ts:1-4`) so bundlers never pull `node:fs` into the browser build. Node consumers import it from the `@ctd/sdk/proving/artifacts` subpath (added locally — see `ATTRIBUTION.md`); browser code imports the `circuits/*.json` files directly through its bundler instead (`packages/ctd-sdk/src/proving/artifacts.ts:1-8`).
 - The vendored `src/disclosure/*` and its `README.md` reference a sibling `@ctd/disclosure` package (shared circuit + pinned VK for selective disclosure) that is **not** part of this vendored copy — those are inert doc comments, not live imports; nothing in `packages/ctd-sdk` fails to build or run without it, but selective-disclosure proving/verification will need that package vendored separately if a later task needs it.
 - `test/*.mjs` import straight from `../src/*.ts` (via `tsx`), not from `dist/` — the tests pass without running `build` first, but consumers importing `@ctd/sdk` as a workspace package need `dist/` (i.e. `pnpm --filter @ctd/sdk build`) since `package.json` exports point at `./dist/index.js`.
 - `test/prove.mjs` needs network on first run (CRS fetch to `~/.bb-crs`, ~2 MB); subsequent runs are offline and fast.
