@@ -1,0 +1,123 @@
+/**
+ * Unit tests for the worker loop's pure/testable pieces (Task 7):
+ * exponential-backoff arithmetic and the per-tick scheduling that skips a
+ * backing-off stream while a healthy stream keeps polling every tick — the
+ * layer `pollStreams` (`api/src/modules/indexer/poller.ts`, invariant 5)
+ * sits under. Process lifecycle (`main`: env load, signal handling,
+ * `pool.end()`) is intentionally NOT unit-tested here — it's exercised by
+ * the bounded live-verification run instead (see task-7-report.md).
+ */
+import { describe, expect, it } from "vitest";
+import type { IndexerRepo, RepoOps } from "./db/repo.js";
+import type { StreamSource } from "./modules/indexer/poller.js";
+import { backoffDelayMs, buildInitialStreamState, tick, type StreamRuntimeState } from "./worker.js";
+
+/** Minimal in-memory `IndexerRepo` — enough for `tick`/`pollStreams` to run against; no rollback semantics needed here (that's covered in `poller.test.ts`). */
+class FakeRepo implements IndexerRepo {
+  private cursors = new Map<string, string>();
+  private eventCounter = 0;
+
+  async insertEvents(rows: unknown[]): Promise<void> {
+    this.eventCounter += rows.length;
+  }
+  async getCursor(key: string): Promise<string | null> {
+    return this.cursors.get(key) ?? null;
+  }
+  async setCursor(key: string, value: string): Promise<void> {
+    this.cursors.set(key, value);
+  }
+  async insertCtActivity(): Promise<void> {}
+  async insertBootnodePage(): Promise<void> {}
+  async getBootnodePage(): Promise<null> {
+    return null;
+  }
+  async withTransaction<T>(fn: (repo: RepoOps) => Promise<T>): Promise<T> {
+    return fn(this);
+  }
+  get eventCount(): number {
+    return this.eventCounter;
+  }
+}
+
+describe("backoffDelayMs", () => {
+  it.each([
+    [0, 0],
+    [1, 1000],
+    [2, 2000],
+    [3, 4000],
+    [4, 8000],
+    [5, 16000],
+    [6, 32000],
+    [7, 60000],
+    [10, 60000],
+  ])("consecutiveFailures=%i -> %ims (1s base, 60s cap)", (failures, expected) => {
+    expect(backoffDelayMs(failures)).toBe(expected);
+  });
+});
+
+describe("tick", () => {
+  it("isolates a backing-off stream from a healthy one, and retries it once its backoff window elapses", async () => {
+    const repo = new FakeRepo();
+    let now = 1_000_000;
+    const failingCalls: Array<string | null> = [];
+    const okCalls: Array<string | null> = [];
+    const failingSource: StreamSource = {
+      fetchPage: async (cursor) => {
+        failingCalls.push(cursor);
+        throw new Error("boom");
+      },
+    };
+    const okSource: StreamSource = {
+      fetchPage: async (cursor) => {
+        okCalls.push(cursor);
+        return { events: [], nextCursor: "ok-cursor" };
+      },
+    };
+    const states: StreamRuntimeState[] = [
+      buildInitialStreamState("failing", failingSource),
+      buildInitialStreamState("ok", okSource),
+    ];
+
+    await tick(states, repo, now);
+    expect(failingCalls).toHaveLength(1);
+    expect(okCalls).toHaveLength(1);
+    const failingState = states.find((s) => s.streamKey === "failing")!;
+    expect(failingState.consecutiveFailures).toBe(1);
+    expect(failingState.nextAttemptAt).toBe(now + 1000);
+
+    // 500ms later: still inside the 1s backoff window — failing stream skipped, ok stream keeps going.
+    now += 500;
+    await tick(states, repo, now);
+    expect(failingCalls).toHaveLength(1);
+    expect(okCalls).toHaveLength(2);
+
+    // Past the 1s window (total 1100ms since the first failure): retried, and fails again -> backoff doubles.
+    now += 600;
+    await tick(states, repo, now);
+    expect(failingCalls).toHaveLength(2);
+    expect(failingState.consecutiveFailures).toBe(2);
+    expect(failingState.nextAttemptAt).toBe(now + 2000);
+  });
+
+  it("resets a stream's backoff to zero after it succeeds again", async () => {
+    const repo = new FakeRepo();
+    let now = 0;
+    let shouldFail = true;
+    const source: StreamSource = {
+      fetchPage: async () => {
+        if (shouldFail) throw new Error("boom");
+        return { events: [], nextCursor: "c" };
+      },
+    };
+    const states: StreamRuntimeState[] = [buildInitialStreamState("flaky", source)];
+
+    await tick(states, repo, now);
+    expect(states[0]!.consecutiveFailures).toBe(1);
+
+    shouldFail = false;
+    now += 1000;
+    await tick(states, repo, now);
+    expect(states[0]!.consecutiveFailures).toBe(0);
+    expect(states[0]!.nextAttemptAt).toBe(now);
+  });
+});
