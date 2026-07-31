@@ -17,4 +17,13 @@ export const TESTNET = {
     deploymentLedger: 3773948,
     nethermindBootnode: "https://bootnode.dev-nethermind.xyz",
   },
+  ct: {
+    token: "CBTEJFLW25UXIDAIWJ3KUJGI5CE2YLHM5GQM2VFU7JQZS53HE3HKGCLH",
+    verifier: "CBDQQ75BKSAO2TG4D37PKVJZ64F4Y3AHKTSY3NXV6DPEACSDWO4TBGQH",
+    auditor: "CB27W7M4PLVGC77X5LPNZEOX5UCUWYJ3CODSBR6JR2WJEO66E4BGBDKA",
+    underlying: "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
+    deployedAtLedger: 3900251,
+    auditorId: 0,
+    addrF: "0x1c7eaa88b6e7b38066a07bfe60fc0da61efbce527e51267c124f94ecb258cb76",
+  },
 } as const;

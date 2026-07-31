@@ -2,7 +2,7 @@
 
 > **Living document.** Read this before modifying the module. Update it in the same change whenever the module's behavior, endpoints, files, or dependencies change.
 
-**Source:** `packages/shared/` · **Last verified:** 2026-07-31
+**Source:** `packages/shared/` · **Last verified:** 2026-07-31 (added `TESTNET.ct`)
 
 ## Purpose
 
@@ -23,6 +23,7 @@ Cross-package config and constants for the privacy-wallet monorepo, published as
   - `rpcUrl`, `horizonUrl`, `networkPassphrase`, `nativeSac`
   - `smartAccount.{accountWasmHash, webauthnVerifierAddress, ed25519VerifierAddress, relayerUrl}`
   - `spp.{pool, publicKeyRegistry, aspMembership, aspNonMembership, deploymentLedger, nethermindBootnode}`
+  - `ct.{token, verifier, auditor, underlying, deployedAtLedger, auditorId, addrF}` — Confidential Token contract suite on testnet; sourced from `contracts/deployments/testnet.json` (see `docs/modules/contracts.md` for the deploy/import procedure and provenance). The auditor's private key is deliberately **not** here — it lives in the repo-root `.env` as `CT_AUDITOR_SECRET_HEX`.
 
 ## Key methods
 
@@ -31,7 +32,7 @@ Cross-package config and constants for the privacy-wallet monorepo, published as
 ## Dependencies
 
 - `zod` (^3.24) — declared as a dependency for upcoming schema-validation work; not yet used in source as of this bootstrap commit.
-- Consumed by: every later package in this monorepo (`app`, `api`) that needs testnet network/contract config. CT (confidential token) addresses join `TESTNET` in a later task.
+- Consumed by: every later package in this monorepo (`app`, `api`) that needs testnet network/contract config, including the CT (confidential token) addresses in `TESTNET.ct`.
 
 ## Gotchas & invariants
 
