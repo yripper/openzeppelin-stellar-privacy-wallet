@@ -8,7 +8,7 @@
  * `DATABASE_URL=postgres://grantfox:grantfox@localhost:5433/grantfox pnpm --filter @grantfox/api test`
  */
 import { sql } from "drizzle-orm";
-import { afterAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createDb, type Db } from "./client.js";
 import { createRepo, type IndexerRepo } from "./repo.js";
 import { ctActivity, events, type NewEventRow } from "./schema.js";
@@ -37,9 +37,12 @@ describe.skipIf(!DATABASE_URL)("IndexerRepo (integration, local docker postgres)
   let pool: { end: () => Promise<void> };
   let repo: IndexerRepo;
 
-  beforeEach(async () => {
+  beforeAll(() => {
     ({ db, pool } = createDb(DATABASE_URL!));
     repo = createRepo(db);
+  });
+
+  beforeEach(async () => {
     // Truncate between tests so each test owns a clean table set.
     await db.execute(
       sql`truncate table events, ct_activity, cursors, bootnode_pages restart identity cascade`,
@@ -47,7 +50,7 @@ describe.skipIf(!DATABASE_URL)("IndexerRepo (integration, local docker postgres)
   });
 
   afterAll(async () => {
-    await pool?.end();
+    await pool.end();
   });
 
   it("insertEvents is idempotent (on-conflict-do-nothing by id)", async () => {
