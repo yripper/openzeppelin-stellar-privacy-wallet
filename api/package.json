@@ -1,0 +1,33 @@
+{
+  "name": "@grantfox/api",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate"
+  },
+  "dependencies": {
+    "@grantfox/shared": "workspace:*",
+    "@stellar/stellar-sdk": "16.2.0",
+    "drizzle-orm": "^0.45",
+    "fastify": "^5",
+    "pg": "^8",
+    "zod": "^3.24"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/pg": "^8",
+    "drizzle-kit": "^0.31",
+    "tsx": "^4.19.0",
+    "typescript": "^5.9.2",
+    "vitest": "^3"
+  }
+}
