@@ -49,14 +49,28 @@ export function buildInitialStreamState(streamKey: string, source: StreamSource)
  * `consecutiveFailures` increments and its next attempt is pushed out by
  * `backoffDelayMs`; a succeeding stream resets to zero and stays on the
  * normal cadence (the caller re-invokes `tick` every `POLL_INTERVAL_MS`).
+ *
+ * `shouldStop` is forwarded to `pollStreams` so `main`'s shutdown flag can
+ * cut a multi-stream `tick` short between streams (not mid-flight — see
+ * `pollStreams`'s doc) once network calls are timeout-bounded (review fix):
+ * without a timeout, a hung fetch could block `tick` — and therefore the
+ * `while` loop's `shuttingDown` check — indefinitely; with one, `tick`'s
+ * worst case is bounded by the sum of in-flight-or-later streams' timeouts,
+ * and `shouldStop` trims that to at most one.
  */
-export async function tick(states: StreamRuntimeState[], repo: IndexerRepo, now: number = Date.now()): Promise<void> {
+export async function tick(
+  states: StreamRuntimeState[],
+  repo: IndexerRepo,
+  now: number = Date.now(),
+  shouldStop?: () => boolean,
+): Promise<void> {
   const due = states.filter((s) => now >= s.nextAttemptAt);
   if (due.length === 0) return;
 
   const outcomes = await pollStreams(
     due.map((s) => ({ streamKey: s.streamKey, source: s.source })),
     repo,
+    shouldStop,
   );
 
   for (const outcome of outcomes) {
@@ -120,7 +134,7 @@ export async function main(): Promise<void> {
   console.log(`[worker] starting — streams: ${states.map((s) => s.streamKey).join(", ")}`);
 
   while (!shuttingDown) {
-    await tick(states, repo);
+    await tick(states, repo, Date.now(), () => shuttingDown);
     if (shuttingDown) break;
 
     // Sleep for POLL_INTERVAL_MS, but wake early on a shutdown signal

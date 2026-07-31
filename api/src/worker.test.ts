@@ -120,4 +120,32 @@ describe("tick", () => {
     expect(states[0]!.consecutiveFailures).toBe(0);
     expect(states[0]!.nextAttemptAt).toBe(now);
   });
+
+  it("forwards shouldStop to pollStreams, cutting the tick short between streams (review fix)", async () => {
+    const repo = new FakeRepo();
+    const calls: string[] = [];
+    const firstSource: StreamSource = {
+      fetchPage: async () => {
+        calls.push("first");
+        return { events: [], nextCursor: "c1" };
+      },
+    };
+    const secondSource: StreamSource = {
+      fetchPage: async () => {
+        calls.push("second");
+        return { events: [], nextCursor: "c2" };
+      },
+    };
+    const states: StreamRuntimeState[] = [
+      buildInitialStreamState("first", firstSource),
+      buildInitialStreamState("second", secondSource),
+    ];
+
+    await tick(states, repo, 0, () => true); // already "shutting down" before the tick even starts
+
+    expect(calls).toEqual([]); // neither stream was attempted
+    // Untouched backoff state — a stream skipped by a shutdown signal isn't a failure.
+    expect(states[0]!.consecutiveFailures).toBe(0);
+    expect(states[1]!.consecutiveFailures).toBe(0);
+  });
 });

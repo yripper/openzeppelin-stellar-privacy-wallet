@@ -1,6 +1,6 @@
 import { Contract, rpc, xdr } from "@stellar/stellar-sdk";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { eventIndexFromId, fetchRpcEvents, naturalEventId } from "./soroban-events.js";
+import { DEFAULT_FETCH_TIMEOUT_MS, eventIndexFromId, fetchRpcEvents, naturalEventId } from "./soroban-events.js";
 
 const CONTRACT_ID = "CBTEJFLW25UXIDAIWJ3KUJGI5CE2YLHM5GQM2VFU7JQZS53HE3HKGCLH";
 
@@ -109,6 +109,38 @@ describe("fetchRpcEvents", () => {
     await expect(
       fetchRpcEvents("https://rpc.example/soroban/rpc", { contractIds: [CONTRACT_ID], limit: 10 }),
     ).rejects.toThrow(/startLedger|cursor/);
+  });
+
+  it("wires timeoutMs onto the RpcServer's httpClient.defaults.timeout, defaulting to DEFAULT_FETCH_TIMEOUT_MS (review fix: bounded network calls — see module doc for why the RpcServer CONSTRUCTOR's own `timeout` option is dead in sdk-16.2.0, verified against the installed package)", async () => {
+    let capturedTimeout: number | undefined;
+    vi.spyOn(rpc.Server.prototype, "getEvents").mockImplementation(function (
+      this: rpc.Server,
+    ): Promise<rpc.Api.GetEventsResponse> {
+      capturedTimeout = this.httpClient.defaults.timeout;
+      return Promise.resolve({
+        events: [],
+        latestLedger: 100,
+        oldestLedger: 1,
+        latestLedgerCloseTime: "t",
+        oldestLedgerCloseTime: "t",
+        cursor: "c",
+      });
+    });
+
+    await fetchRpcEvents("https://rpc.example/soroban/rpc", {
+      contractIds: [CONTRACT_ID],
+      startLedger: 1,
+      limit: 10,
+      timeoutMs: 12345,
+    });
+    expect(capturedTimeout).toBe(12345);
+
+    await fetchRpcEvents("https://rpc.example/soroban/rpc", {
+      contractIds: [CONTRACT_ID],
+      startLedger: 1,
+      limit: 10,
+    });
+    expect(capturedTimeout).toBe(DEFAULT_FETCH_TIMEOUT_MS);
   });
 
   it("throws when an event has no resolvable contractId", async () => {

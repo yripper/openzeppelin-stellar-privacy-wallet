@@ -22,6 +22,24 @@ function mockFetchOnce(body: unknown) {
   return fetchMock;
 }
 
+/** A `fetch` that never resolves on its own — only settles (with an AbortError) if the caller's `signal` is aborted, same as a real hung connection under a real `AbortController`. */
+function mockHangingFetch() {
+  const fetchMock = vi.fn((_url: string, init?: RequestInit) => {
+    return new Promise((_resolve, reject) => {
+      const signal = init?.signal;
+      if (signal?.aborted) {
+        reject(new DOMException("The operation was aborted.", "AbortError"));
+        return;
+      }
+      signal?.addEventListener("abort", () => {
+        reject(new DOMException("The operation was aborted.", "AbortError"));
+      });
+    });
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  return fetchMock;
+}
+
 function makeBootnodeEvent(overrides: Record<string, unknown> = {}) {
   return {
     type: "contract",
@@ -170,6 +188,18 @@ describe("fetchBootnodeEvents", () => {
     await expect(fetchBootnodeEvents(URL, { contractIds: [CONTRACT_ID] })).rejects.toThrow(
       /startLedger|cursor/,
     );
+  });
+
+  it("times out a hung request and surfaces it as a normal rejected Error (review fix: bounded network calls)", async () => {
+    const fetchMock = mockHangingFetch();
+
+    await expect(
+      fetchBootnodeEvents(URL, { contractIds: [CONTRACT_ID], startLedger: 1, timeoutMs: 20 }),
+    ).rejects.toThrow(/timed out after 20ms/);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(init.signal).toBeInstanceOf(AbortSignal);
   });
 
   it("throws when a mapped event is missing a required field", async () => {

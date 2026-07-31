@@ -45,13 +45,21 @@
  * the row — see the task report for why this is judged acceptable for a
  * hackathon-scope adapter (Task 7 owns deciding what to do with a thrown
  * mapping error, e.g. surfacing/alerting).
+ *
+ * Network timeout (Task 7 review fix): a hung/never-responding bootnode
+ * would otherwise block this `fetch` forever, stalling the worker's whole
+ * tick (see `poller.ts`/`worker.ts` module docs). Bounded with a plain
+ * `AbortController`+`setTimeout` — no SDK involved here, this adapter owns
+ * its own `fetch` call directly.
  */
-import { eventIndexFromId, naturalEventId, type EventsPage, type RawEvent } from "./soroban-events.js";
+import { DEFAULT_FETCH_TIMEOUT_MS, eventIndexFromId, naturalEventId, type EventsPage, type RawEvent } from "./soroban-events.js";
 
 export interface FetchBootnodeEventsOptions {
   contractIds: string[];
   startLedger?: number;
   cursor?: string;
+  /** Network timeout in ms for this call; default `DEFAULT_FETCH_TIMEOUT_MS` (shared with `fetchRpcEvents`). */
+  timeoutMs?: number;
 }
 
 /** `-32004`: bootnode has no cached page yet (cold tip, or indexer hasn't caught up). Retry with backoff — Task 7's call. */
@@ -143,7 +151,7 @@ export async function fetchBootnodeEvents(
   url: string,
   opts: FetchBootnodeEventsOptions,
 ): Promise<EventsPage | { handoff: { fromLedger: number } }> {
-  const { contractIds, startLedger, cursor } = opts;
+  const { contractIds, startLedger, cursor, timeoutMs = DEFAULT_FETCH_TIMEOUT_MS } = opts;
   if (cursor === undefined && startLedger === undefined) {
     throw new Error("fetchBootnodeEvents requires a startLedger or a cursor");
   }
@@ -159,11 +167,28 @@ export async function fetchBootnodeEvents(
     },
   };
 
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-  });
+  // Bounds the request itself (connection + response headers). A slow
+  // body stream after that point isn't covered — getting this far already
+  // proves the bootnode is reachable and responding, which is the failure
+  // mode this timeout exists to catch (a hung/unreachable bootnode).
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+  } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") {
+      throw new Error(`fetchBootnodeEvents: request to ${url} timed out after ${timeoutMs}ms`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
   const json = (await res.json()) as JsonRpcResponse;
 
   if (json.error) {

@@ -119,10 +119,24 @@ export interface StreamPollOutcome {
  * stream gets its own try/catch, so one throwing doesn't stop the rest from
  * being attempted. Returns a per-stream outcome for the caller (the
  * `worker.ts` loop) to drive backoff bookkeeping / logging.
+ *
+ * `shouldStop` is checked between iterations (never mid-flight — a stream
+ * already in progress always runs to completion/timeout, this only skips
+ * streams not yet started) so a shutdown signal can shorten `tick`'s worst
+ * case from "every remaining stream's full timeout" to "at most the one
+ * currently in flight" without restructuring the sequential loop into
+ * concurrent/`Promise.all` execution. A skipped stream is simply absent
+ * from the returned outcomes (its backoff state is left untouched by the
+ * caller — reasonable given the process is shutting down anyway).
  */
-export async function pollStreams(streams: StreamConfig[], repo: IndexerRepo): Promise<StreamPollOutcome[]> {
+export async function pollStreams(
+  streams: StreamConfig[],
+  repo: IndexerRepo,
+  shouldStop?: () => boolean,
+): Promise<StreamPollOutcome[]> {
   const outcomes: StreamPollOutcome[] = [];
   for (const { streamKey, source } of streams) {
+    if (shouldStop?.()) break;
     try {
       await pollStream(source, repo, streamKey);
       outcomes.push({ streamKey, ok: true });
@@ -185,6 +199,8 @@ export interface RpcSourceConfig {
   contractIds: string[];
   startLedger: number;
   limit?: number;
+  /** Network timeout in ms per `getEvents` call; default `DEFAULT_FETCH_TIMEOUT_MS`. Bounds `pollStream` so a hung RPC can't stall the worker's tick indefinitely (review fix). */
+  timeoutMs?: number;
   /** Injectable for tests; defaults to the real `fetchRpcEvents`. */
   fetchEvents?: typeof fetchRpcEvents;
 }
@@ -200,6 +216,7 @@ export function makeRpcSource(config: RpcSourceConfig): StreamSource {
       const page = await fetchEvents(config.rpcUrl, {
         contractIds: config.contractIds,
         limit,
+        timeoutMs: config.timeoutMs,
         ...resumeTokenToRpcFetchOpts(token, config.startLedger),
       });
       return { events: page.events, nextCursor: encodeResumeToken(nextResumeTokenFromPage(page)) };
@@ -214,6 +231,8 @@ export interface BootnodeThenRpcSourceConfig {
   /** The bootnode's start ledger (e.g. `TESTNET.spp.deploymentLedger`). */
   startLedger: number;
   limit?: number;
+  /** Network timeout in ms per bootnode/RPC call; default `DEFAULT_FETCH_TIMEOUT_MS` (review fix, same rationale as `RpcSourceConfig.timeoutMs`). */
+  timeoutMs?: number;
   /** Injectable for tests; defaults to the real `fetchBootnodeEvents`. */
   fetchBootnode?: typeof fetchBootnodeEvents;
   /** Injectable for tests; defaults to the real `fetchRpcEvents`. */
@@ -235,6 +254,7 @@ export function makeBootnodeThenRpcSource(config: BootnodeThenRpcSourceConfig): 
     const page = await fetchEvents(config.rpcUrl, {
       contractIds: config.contractIds,
       limit,
+      timeoutMs: config.timeoutMs,
       ...resumeTokenToRpcFetchOpts(token, config.startLedger),
     });
     return { events: page.events, nextCursor: RPC_PREFIX + encodeResumeToken(nextResumeTokenFromPage(page)) };
@@ -254,6 +274,7 @@ export function makeBootnodeThenRpcSource(config: BootnodeThenRpcSourceConfig): 
       const token = cursor === null ? null : decodeResumeToken(cursor);
       const page = await fetchBootnode(config.bootnodeUrl, {
         contractIds: config.contractIds,
+        timeoutMs: config.timeoutMs,
         ...resumeTokenToBootnodeFetchOpts(token, config.startLedger),
       });
 

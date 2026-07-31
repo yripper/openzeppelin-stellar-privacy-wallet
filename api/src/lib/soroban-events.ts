@@ -51,8 +51,31 @@
  * importing `@ctd/sdk` — that package pulls in the zk-proving stack
  * (`@aztec/bb.js`, `@noir-lang/noir_js`), which `@grantfox/api` has no other
  * reason to depend on for one string-template function.
+ *
+ * Network timeout (Task 7 review fix): `RpcServer.Options.timeout` (the
+ * CONSTRUCTOR option documented in `server.d.ts`) is a dead type in the
+ * installed sdk-16.2.0 build — `new RpcServer(url, opts)` never reads
+ * `opts.timeout` (`rpc/server.js`'s constructor only consumes
+ * `opts.headers`/`opts.allowHttp`; verified by reading the actual
+ * transpiled source, not just the `.d.ts`). The mechanism that DOES work,
+ * verified the same way: `server.httpClient.defaults.timeout = ms`,
+ * mutating the (mutable, despite `httpClient` itself being `readonly`)
+ * `HttpClientDefaults` object the doc comment's own example
+ * (`server.httpClient.defaults.headers[...] = ...`) shows is a supported
+ * pattern. `getEvents`'s call path (`_getEvents` → `postObject` →
+ * `httpClient.post(url, body)`, no per-call config) merges `httpClient.defaults`
+ * into every request, and — since `postObject` never sets `maxRedirects`/
+ * `maxContentLength` — routes through the underlying `feaxios` adapter
+ * (`instance.request(config)`, not the SDK's own `boundedFetchAdapter`),
+ * which honors `config.timeout` via `AbortSignal.timeout(ms)` and rejects
+ * with a plain `AxiosError` (`"timeout of Nms exceeded"`, code
+ * `ECONNABORTED`) on expiry — an ordinary rejected Promise, exactly what
+ * the per-stream backoff in `worker.ts` needs.
  */
 import { rpc, type xdr } from "@stellar/stellar-sdk";
+
+/** Default per-call network timeout — bounds `getEvents` so one hung stream can't stall the worker's whole tick (see module doc). */
+export const DEFAULT_FETCH_TIMEOUT_MS = 30_000;
 
 /** One on-chain event, shaped to insert directly into the Task-5 `events` table. */
 export interface RawEvent {
@@ -84,6 +107,8 @@ export interface FetchRpcEventsOptions {
   startLedger?: number;
   cursor?: string;
   limit: number;
+  /** Network timeout in ms for this call's `getEvents` request; default `DEFAULT_FETCH_TIMEOUT_MS`. */
+  timeoutMs?: number;
 }
 
 /**
@@ -144,8 +169,11 @@ function mapEvent(event: rpc.Api.EventResponse): RawEvent {
 
 /** Fetch one page of contract events from a Soroban RPC endpoint, wrapping `rpc.Server.getEvents`. */
 export async function fetchRpcEvents(rpcUrl: string, opts: FetchRpcEventsOptions): Promise<EventsPage> {
-  const { contractIds, startLedger, cursor, limit } = opts;
+  const { contractIds, startLedger, cursor, limit, timeoutMs = DEFAULT_FETCH_TIMEOUT_MS } = opts;
   const server = new rpc.Server(rpcUrl);
+  // See module doc: the constructor's `Options.timeout` is a dead type in
+  // sdk-16.2.0 — this is the mechanism that actually bounds the request.
+  server.httpClient.defaults.timeout = timeoutMs;
   const filters: rpc.Api.EventFilter[] = [{ type: "contract", contractIds }];
 
   let response: rpc.Api.GetEventsResponse;

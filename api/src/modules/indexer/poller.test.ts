@@ -299,6 +299,58 @@ describe("pollStreams — invariant 5: per-stream error isolation", () => {
     expect(await repo.getCursor("b:ok")).toBe("cursor-ok");
     expect(repo.eventCount).toBe(1);
   });
+
+  it("skips streams not yet started once shouldStop() returns true (review fix: cheap shutdown-responsiveness check between streams, checked between iterations only — never mid-flight)", async () => {
+    const repo = new FakeRepo();
+    const calls: string[] = [];
+    const firstSource: StreamSource = {
+      fetchPage: async () => {
+        calls.push("first");
+        return { events: [], nextCursor: "cursor-1" };
+      },
+    };
+    const secondSource: StreamSource = {
+      fetchPage: async () => {
+        calls.push("second"); // must NOT run: shouldStop() flips true after the first stream completes
+        return { events: [], nextCursor: "cursor-2" };
+      },
+    };
+
+    let stop = false;
+    const outcomes = await pollStreams(
+      [
+        { streamKey: "first", source: firstSource },
+        { streamKey: "second", source: secondSource },
+      ],
+      repo,
+      () => stop,
+    );
+    // Nothing set `stop` in this run, so both streams should still run —
+    // sanity check that a shouldStop that never fires changes nothing.
+    expect(calls).toEqual(["first", "second"]);
+    expect(outcomes).toHaveLength(2);
+
+    calls.length = 0;
+    stop = false;
+    const stoppingFirstSource: StreamSource = {
+      fetchPage: async () => {
+        calls.push("first");
+        stop = true; // simulate a shutdown signal arriving while the first stream was in flight
+        return { events: [], nextCursor: "cursor-1" };
+      },
+    };
+    const outcomes2 = await pollStreams(
+      [
+        { streamKey: "first", source: stoppingFirstSource },
+        { streamKey: "second", source: secondSource },
+      ],
+      repo,
+      () => stop,
+    );
+
+    expect(calls).toEqual(["first"]); // second never started
+    expect(outcomes2).toEqual([{ streamKey: "first", ok: true }]);
+  });
 });
 
 describe("makeRpcSource", () => {
