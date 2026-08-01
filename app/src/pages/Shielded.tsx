@@ -23,6 +23,7 @@ import {
   SPP_BOOTNODE_URL,
   SPP_CONNECT_PHASE_LABELS,
   SPP_PROGRESS_EVENT,
+  SppWalletSwitchError,
   type SppConnectPhase,
   type SppExecuteResult,
   type SppProgressDetail,
@@ -31,6 +32,17 @@ import {
 } from "../lib/spp.js";
 
 type Action = "create-session" | "fund" | "shield" | "send" | "unshield" | "sweep" | "register";
+
+/** User-facing name per action — error copy must never leak the internal key (`"send failed: …"`). */
+const ACTION_LABELS: Record<Action, string> = {
+  "create-session": "Creating the session account",
+  fund: "Moving XLM to the shielded signer",
+  shield: "Shielding",
+  send: "Shielded send",
+  unshield: "Unshielding",
+  sweep: "Returning session XLM to your wallet",
+  register: "Enabling receiving",
+};
 
 type Notice = { kind: "ok" | "warn" | "error"; text: string };
 
@@ -46,7 +58,7 @@ type RecipientStatus =
  * Turn the SDK's execute envelope (`{status:"ok"|"failed"|"aspNotReady"}`,
  * which RESOLVES on failure rather than throwing) into user-facing copy.
  */
-function describeResult(result: SppExecuteResult, label: string): Notice {
+export function describeResult(result: SppExecuteResult, label: string): Notice {
   if (result.status === "aspNotReady") {
     return {
       kind: "warn",
@@ -76,17 +88,46 @@ function errorNotice(error: unknown, label: string): Notice {
   return { kind: "error", text: `${label} failed: ${error instanceof Error ? error.message : String(error)}` };
 }
 
+/**
+ * Decide what an action reports once its post-action re-read has also run.
+ *
+ * The invariant, extracted here so it is unit-testable: **an action's own
+ * outcome is never replaced by a refresh failure.** `refresh()` starts with
+ * `client.sync()`, so a transient network hiccup after a successful shield
+ * would otherwise swap "Shielding 10 XLM confirmed…" — or the `aspNotReady`
+ * explanation — for a state-read error, hiding what just happened to the user's
+ * money. A refresh failure is reported alongside it as a staleness warning, and
+ * only takes the notice slot when the action produced nothing to say.
+ */
+export function resolveNotices(
+  outcome: Notice | undefined,
+  refreshFailure: string | undefined
+): { notice: Notice | undefined; staleWarning: string | undefined } {
+  if (outcome) return { notice: outcome, staleWarning: refreshFailure };
+  if (refreshFailure) {
+    return {
+      notice: { kind: "error", text: `Reading shielded state failed: ${refreshFailure}` },
+      staleWarning: undefined,
+    };
+  }
+  return { notice: undefined, staleWarning: undefined };
+}
+
 export default function Shielded() {
   const { contractId, bundle } = useWallet();
 
   const [rail, setRail] = useState<SppRail | undefined>(undefined);
   const [connectPhase, setConnectPhase] = useState<SppConnectPhase>("loading-sdk");
   const [connectError, setConnectError] = useState<string | undefined>(undefined);
+  /** Set when the connect failed specifically because this page already holds another wallet's rail. */
+  const [needsReload, setNeedsReload] = useState(false);
   const [view, setView] = useState<SppView | undefined>(undefined);
   const [refreshing, setRefreshing] = useState(false);
 
   const [busy, setBusy] = useState<Action | undefined>(undefined);
   const [notice, setNotice] = useState<Notice | undefined>(undefined);
+  /** Set when the post-action re-read failed: the action's own outcome stands, but the numbers below it don't. */
+  const [staleWarning, setStaleWarning] = useState<string | undefined>(undefined);
   const [progress, setProgress] = useState<string | undefined>(undefined);
 
   const [fundAmount, setFundAmount] = useState("");
@@ -127,42 +168,70 @@ export default function Shielded() {
         if (!cancelled) setRail(connected);
       })
       .catch((error: unknown) => {
-        if (!cancelled) setConnectError(error instanceof Error ? error.message : String(error));
+        if (cancelled) return;
+        setNeedsReload(error instanceof SppWalletSwitchError);
+        setConnectError(error instanceof Error ? error.message : String(error));
       });
     return () => {
       cancelled = true;
     };
   }, [contractId, bundle]);
 
-  const refresh = useCallback(async () => {
-    if (!rail) return;
+  /**
+   * Re-read the shielded snapshot.
+   *
+   * Reports failure by RETURN VALUE rather than by setting `notice` itself:
+   * `run()` calls this after every action, and `refresh()` starts with
+   * `client.sync()` (the most failure-prone call in the rail). If it owned the
+   * notice, a transient sync hiccup would overwrite the action's own outcome —
+   * replacing "Shielding 10 XLM confirmed…", or the ASP-not-ready explanation,
+   * with a state-read error, i.e. losing the result of an operation that may
+   * have just moved money.
+   *
+   * @returns a message when the snapshot could not be re-read, `undefined` on success.
+   */
+  const refresh = useCallback(async (): Promise<string | undefined> => {
+    if (!rail) return undefined;
     setRefreshing(true);
     try {
       setView(await rail.refresh());
+      return undefined;
     } catch (error) {
-      setNotice(errorNotice(error, "Reading shielded state"));
+      return error instanceof Error ? error.message : String(error);
     } finally {
       setRefreshing(false);
     }
   }, [rail]);
 
-  useEffect(() => {
-    void refresh();
+  /** `refresh()` for the standalone button / mount effect, where the failure IS the only news. */
+  const refreshAndReport = useCallback(async (): Promise<void> => {
+    const failure = await refresh();
+    setStaleWarning(failure);
+    if (failure) setNotice({ kind: "error", text: `Reading shielded state failed: ${failure}` });
   }, [refresh]);
+
+  useEffect(() => {
+    void refreshAndReport();
+  }, [refreshAndReport]);
 
   async function run(action: Action, fn: () => Promise<Notice | undefined>): Promise<void> {
     setBusy(action);
     setNotice(undefined);
+    setStaleWarning(undefined);
+
+    let outcome: Notice | undefined;
     try {
-      const result = await fn();
-      if (result) setNotice(result);
+      outcome = await fn();
     } catch (error) {
-      setNotice(errorNotice(error, action));
+      outcome = errorNotice(error, ACTION_LABELS[action]);
     } finally {
       setBusy(undefined);
       setProgress(undefined);
-      await refresh();
     }
+
+    const resolved = resolveNotices(outcome, await refresh());
+    setNotice(resolved.notice);
+    setStaleWarning(resolved.staleWarning);
   }
 
   /** Parse an XLM input, surfacing a bad value as a notice instead of throwing into the click handler. */
@@ -201,6 +270,20 @@ export default function Shielded() {
     return (
       <section className="balance-card">
         <p className="muted">Connect a wallet to use shielded payments.</p>
+      </section>
+    );
+  }
+
+  if (needsReload) {
+    return (
+      <section className="balance-card">
+        <h2>Shielded balance</h2>
+        <p role="alert" className="error">
+          This page is still holding the previous wallet&apos;s shielded session. Reload to switch.
+        </p>
+        <button type="button" onClick={() => window.location.reload()}>
+          Reload
+        </button>
       </section>
     );
   }
@@ -282,8 +365,18 @@ export default function Shielded() {
             {notice.text}
           </p>
         ) : null}
+        {staleWarning ? (
+          <p role="alert" className="error">
+            The balances above could not be refreshed afterwards ({staleWarning}) — they may be out
+            of date. Try Refresh.
+          </p>
+        ) : null}
 
-        <button type="button" onClick={() => void refresh()} disabled={refreshing || disabled}>
+        <button
+          type="button"
+          onClick={() => void refreshAndReport()}
+          disabled={refreshing || disabled}
+        >
           {refreshing ? "Refreshing…" : "Refresh"}
         </button>
       </section>

@@ -195,8 +195,14 @@ export function stroopsToKitXlm(stroops: bigint): number {
   return xlm;
 }
 
-/** Narrow the SDK's `unknown` execute envelope without trusting it blindly. */
-function asExecuteResult(value: unknown): SppExecuteResult {
+/**
+ * Narrow the SDK's `unknown` execute envelope without trusting it blindly.
+ *
+ * Exported for unit testing: this is the boundary where the SDK's
+ * resolves-on-failure convention (`{status:"failed"}` is a RESOLVED promise,
+ * not a rejection) becomes a typed value callers must branch on.
+ */
+export function asExecuteResult(value: unknown): SppExecuteResult {
   const status = (value as { status?: unknown } | null)?.status;
   if (status === "ok") {
     return { status: "ok", hashes: ((value as { hashes?: string[] }).hashes ?? []) as string[] };
@@ -507,7 +513,33 @@ export class SppRail {
     return asExecuteResult(await this.pool.withdraw(stroops, this.sessionAddress));
   }
 
-  /** Stop any SDK-side background work holding the storage DB. */
+  /**
+   * Release what the SDK actually lets us release.
+   *
+   * **This does NOT terminate the storage or prover workers, and cannot.**
+   * `Storage.open()` spawns a fresh worker per call
+   * (`sdk/web/src/storage.rs:75-87`) and `Client.new` immediately takes a
+   * `storage.fork()` of the bridge plus a prover bridge of its own
+   * (`sdk/web/src/client/mod.rs`); the package's JS wrapper then returns a
+   * plain object exposing only `{backgroundSync, stopBackgroundSync, sync,
+   * operationalFeed, account, recipientLookup, aspState, allContractsData,
+   * verifySelectiveDisclosure}` (`stellar-private-payments/js/index.js`'s
+   * `wrapClient`) — no `free`, no dispose. So the client's forks (and with them
+   * both workers) outlive anything we can do here.
+   *
+   * Consequence, enforced in {@link connectSppRail}: a wallet switch requires a
+   * PAGE RELOAD. Opening a second `Storage.open()` in the same page would put
+   * two storage workers on the same `spp.db`, against the SDK's own "call once
+   * per page session" instruction.
+   *
+   * What this does do: `stopBackgroundSync()` (a no-op here — this rail never
+   * starts background sync, so `stop_background_sync` finds no handle — but
+   * correct to call if that ever changes), and `free()` on the one storage
+   * handle we own, releasing our wasm-side bridge allocation. `free` exists on
+   * the runtime object (it is the wasm-bindgen `Storage` class,
+   * `dist/stellar_private_payments_sdk_web.d.ts`) but is missing from the
+   * package's hand-written `js/types/storage.d.ts`, hence the guarded cast.
+   */
   destroy(): void {
     try {
       this.client.stopBackgroundSync();
@@ -515,6 +547,31 @@ export class SppRail {
       // Already torn down (or never started) — nothing to recover from here.
       console.warn("SPP client teardown:", errorMessage(error));
     }
+    try {
+      (this.storage as unknown as { free?: () => void }).free?.();
+    } catch (error) {
+      console.warn("SPP storage handle release:", errorMessage(error));
+    }
+  }
+}
+
+/**
+ * Thrown by {@link connectSppRail} when a DIFFERENT wallet/session is requested
+ * while a rail is already live in this page.
+ *
+ * The SPP SDK gives no way to shut a client's storage/prover workers down (see
+ * {@link SppRail.destroy}), so rebuilding in place would leave a second storage
+ * worker on the same OPFS `spp.db`. A reload is the only safe switch, and this
+ * error exists so the UI says exactly that instead of the rail silently
+ * misbehaving.
+ */
+export class SppWalletSwitchError extends Error {
+  constructor() {
+    super(
+      "Switching wallets needs a page reload: the shielded pool SDK keeps its storage worker " +
+        "open for the lifetime of the page."
+    );
+    this.name = "SppWalletSwitchError";
   }
 }
 
@@ -532,7 +589,13 @@ export class SppRail {
  * Without that, a StrictMode remount would leave the UI subscribed to the
  * discarded first effect's (already-cancelled) callback and the connect
  * progress would appear frozen at its first step — observed live during this
- * task's gate run.
+ * task's gate run. A caller that passes no `onPhase` LEAVES the existing
+ * listener alone rather than clearing it, so a non-subscribing call can't
+ * silently detach the live subscriber (same failure class, opposite direction).
+ *
+ * Requesting a DIFFERENT key while a rail is live throws
+ * {@link SppWalletSwitchError} instead of building a second rail — see
+ * {@link SppRail.destroy} for why no in-page teardown is possible.
  */
 interface ActiveRail {
   key: string;
@@ -551,12 +614,20 @@ export function connectSppRail(
   const key = `${sessionKeypair(sppRootSecret).publicKey()}:${walletAddress}`;
 
   if (active?.key === key) {
-    active.onPhase = options?.onPhase;
+    // Only ever ADD/replace a listener — assigning `options?.onPhase` blindly
+    // would unsubscribe the live one whenever a caller doesn't pass a callback.
+    if (options?.onPhase) active.onPhase = options.onPhase;
     options?.onPhase?.(active.phase);
     return active.rail;
   }
 
-  const previous = active;
+  if (active) {
+    // A different wallet/session, with a rail already holding this page's
+    // storage + prover workers open. There is no SDK teardown to call, so
+    // refuse rather than double-open the OPFS database.
+    return Promise.reject(new SppWalletSwitchError());
+  }
+
   const entry: ActiveRail = {
     key,
     phase: "loading-sdk",
@@ -576,8 +647,5 @@ export function connectSppRail(
   });
 
   active = entry;
-  if (previous) {
-    void previous.rail.then((rail) => rail.destroy()).catch(() => undefined);
-  }
   return entry.rail;
 }
