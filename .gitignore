@@ -6,3 +6,5 @@ docs/superpowers/
 .superpowers/
 *.local
 .bb-crs/
+app/public/vendor/
+app/public/spp/

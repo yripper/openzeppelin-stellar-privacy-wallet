@@ -9,3 +9,4 @@ Living docs — one per module. **Read the relevant doc before modifying a modul
 | [ctd-sdk.md](ctd-sdk.md) | `packages/ctd-sdk/` | `@ctd/sdk` — vendored Confidential Token client SDK (witness building, UltraHonk proving, chain/state sync) |
 | [contracts.md](contracts.md) | `contracts/` | Confidential Token contract suite deployment record (testnet) + deploy/import procedure |
 | [api.md](api.md) | `api/` | `@grantfox/api` — Postgres schema (`events`, `ct_activity`, `cursors`, `bootnode_pages`) + `createDb`/`IndexerRepo` data-access surface for the indexer worker, normalizer, and API server |
+| [app.md](app.md) | `app/` | `@grantfox/app` — Vite + React 19 wallet frontend: passkey smart-account onboarding, privacy bundle (CT keys + SPP root secret) + encrypted backup, bb.js/SPP vendoring |
