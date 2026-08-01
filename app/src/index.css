@@ -208,6 +208,22 @@ button[type="button"]:not(.tab) {
   text-align: right;
 }
 
+/* Specificity matches (and, by source order, overrides) the global
+   `button[type="button"]:not(.tab)` accent-color rule near the top of this
+   file — this button reports a failure, so it needs the error color, not
+   the default accent. */
+.activity-row-meta button.retry-inline {
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: #dc2626;
+  font-size: 0.875rem;
+  font-weight: 400;
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+  cursor: pointer;
+}
+
 .activity-type {
   font-weight: 600;
 }

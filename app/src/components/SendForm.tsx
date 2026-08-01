@@ -1,8 +1,10 @@
 /**
- * Confidential transfer form: recipient address, a live "is this address
- * registered for confidential transfers?" check on paste/blur (CT contract
- * read via simulation — `rail.isRegistered`), amount, and submit ->
- * `rail.transfer(to, amount)`.
+ * Confidential transfer form: recipient address (C… only — every GrantFox
+ * wallet is a smart-account contract address; a pasted G-address gets a
+ * dedicated "wrong address kind" message rather than a generic invalid
+ * one), a live "is this address registered for confidential transfers?"
+ * check on paste/blur (CT contract read via simulation — `rail.isRegistered`),
+ * amount, and submit -> `rail.transfer(to, amount)`.
  */
 import { useState, type FormEvent } from "react";
 import { StrKey } from "@stellar/stellar-sdk";
@@ -10,11 +12,14 @@ import { StrKey } from "@stellar/stellar-sdk";
 import { useCt } from "../providers/CtProvider.js";
 import { truncateHash, xlmToStroops } from "../lib/format.js";
 
-type RecipientStatus = "idle" | "invalid" | "checking" | "registered" | "unregistered" | "check-failed";
-
-function isPlausibleAddress(value: string): boolean {
-  return StrKey.isValidEd25519PublicKey(value) || StrKey.isValidContract(value);
-}
+type RecipientStatus =
+  | "idle"
+  | "invalid"
+  | "not-contract"
+  | "checking"
+  | "registered"
+  | "unregistered"
+  | "check-failed";
 
 export default function SendForm() {
   const { rail, refresh } = useCt();
@@ -31,7 +36,17 @@ export default function SendForm() {
       setStatus("idle");
       return;
     }
-    if (!isPlausibleAddress(trimmed)) {
+    // Every GrantFox wallet is a smart-account C-address — a G-address is
+    // never a valid recipient within this app's own user base, even though
+    // the CT protocol itself also supports keypair (G-address) holders
+    // (`scripts/smoke-ct.ts`'s "bob"). Distinguish the two invalid cases so
+    // a pasted G-address gets an actionable message instead of a generic
+    // "not a valid address".
+    if (StrKey.isValidEd25519PublicKey(trimmed)) {
+      setStatus("not-contract");
+      return;
+    }
+    if (!StrKey.isValidContract(trimmed)) {
       setStatus("invalid");
       return;
     }
@@ -80,7 +95,7 @@ export default function SendForm() {
     );
   }
 
-  const blocked = status === "invalid" || status === "unregistered";
+  const blocked = status === "invalid" || status === "not-contract" || status === "unregistered";
 
   return (
     <section className="send-form">
@@ -98,12 +113,18 @@ export default function SendForm() {
           onChange={(event) => setRecipient(event.target.value)}
           onBlur={(event) => void checkRecipient(event.target.value)}
           onPaste={(event) => void checkRecipient(event.clipboardData.getData("text"))}
-          placeholder="G… or C…"
+          placeholder="C…"
           autoComplete="off"
           disabled={busy}
         />
         {status === "checking" ? <p className="muted">Checking…</p> : null}
         {status === "invalid" ? <p className="error">That doesn't look like a Stellar address.</p> : null}
+        {status === "not-contract" ? (
+          <p className="error">
+            That's a Stellar account address (G…), not a wallet's contract address — confidential balances live on
+            C… addresses. Ask the recipient for their GrantFox wallet's C… address instead.
+          </p>
+        ) : null}
         {status === "check-failed" ? <p className="error">Couldn't check this address right now.</p> : null}
         {status === "unregistered" ? (
           <p className="error">

@@ -15,7 +15,7 @@ import { useCt } from "../providers/CtProvider.js";
 import { API_URL, type CtRail } from "../lib/ct.js";
 import { stroopsToXlm, truncateAddress, truncateHash } from "../lib/format.js";
 
-interface ActivityApiRow {
+export interface ActivityApiRow {
   id: string;
   account: string;
   type: string;
@@ -34,6 +34,35 @@ const TYPE_LABELS: Record<string, string> = {
   withdraw: "Withdraw",
   transfer: "Transfer",
 };
+
+/** The slice of `CtRail` a transfer-row decrypt needs — narrow on purpose so it's mockable without a real `CtRail` (bb.js provers, StateEngine) in tests. */
+export type TransferDecryptRail = Pick<CtRail, "address" | "resolveActivityEvent" | "decryptTransferAmount">;
+
+export interface ResolvedTransfer {
+  amount: string | undefined;
+  direction: "in" | "out" | undefined;
+}
+
+/**
+ * Resolve + decrypt one `transfer` activity row's amount, or `null` if the
+ * row's on-chain event can't be matched (a legitimate "stays confidential"
+ * case, not an error). Extracted from `ActivityRow`'s effect so the
+ * network/decrypt failure path is unit-testable without a component
+ * render harness — `ActivityRow` is the only caller and owns turning a
+ * REJECTION here into the row's error state (see its module doc: this
+ * function is deliberately NOT defensive, same "throw, don't swallow"
+ * split as `ct-indexer.ts`'s decoders).
+ */
+export async function resolveTransferAmount(
+  row: ActivityApiRow,
+  rail: TransferDecryptRail,
+): Promise<ResolvedTransfer | null> {
+  const event = await rail.resolveActivityEvent(row);
+  if (!event || event.type !== "transfer") return null;
+  const direction: "in" | "out" = event.to === rail.address ? "in" : "out";
+  const value = await rail.decryptTransferAmount(event);
+  return { amount: value !== null ? stroopsToXlm(value) : undefined, direction };
+}
 
 export default function ActivityFeed() {
   const { rail } = useCt();
@@ -99,27 +128,37 @@ function ActivityRow({ row, rail }: { row: ActivityApiRow; rail: CtRail }) {
   const [amount, setAmount] = useState<string | undefined>(publicAmount);
   const [direction, setDirection] = useState<"in" | "out" | undefined>(undefined);
   const [decrypting, setDecrypting] = useState(row.type === "transfer");
+  const [decryptError, setDecryptError] = useState(false);
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
     if (row.type !== "transfer") return;
     let cancelled = false;
-    (async () => {
-      const event = await rail.resolveActivityEvent(row);
-      if (cancelled) return;
-      if (!event || event.type !== "transfer") {
+    setDecrypting(true);
+    setDecryptError(false);
+    resolveTransferAmount(row, rail)
+      .then((resolved) => {
+        if (cancelled) return;
+        if (resolved) {
+          setDirection(resolved.direction);
+          setAmount(resolved.amount);
+        }
         setDecrypting(false);
-        return;
-      }
-      setDirection(event.to === rail.address ? "in" : "out");
-      const value = await rail.decryptTransferAmount(event);
-      if (cancelled) return;
-      setAmount(value !== null ? stroopsToXlm(value) : undefined);
-      setDecrypting(false);
-    })();
+      })
+      .catch(() => {
+        // A transient failure (network error resolving the event, or the
+        // outbound decrypt path's confidentialBalance simulate call) must
+        // not leave this row stuck on "Decrypting…" forever with no way to
+        // recover — surface a compact error state with a retry affordance
+        // instead of an unhandled rejection.
+        if (cancelled) return;
+        setDecryptError(true);
+        setDecrypting(false);
+      });
     return () => {
       cancelled = true;
     };
-  }, [row, rail]);
+  }, [row, rail, attempt]);
 
   const sign = direction === "out" ? "-" : direction === "in" ? "+" : "";
   const amountLabel = decrypting ? "Decrypting…" : amount !== undefined ? `${sign}${amount} XLM` : "Private";
@@ -133,7 +172,13 @@ function ActivityRow({ row, rail }: { row: ActivityApiRow; rail: CtRail }) {
         </span>
       </div>
       <div className="activity-row-meta">
-        <span>{amountLabel}</span>
+        {decryptError ? (
+          <button type="button" className="retry-inline" onClick={() => setAttempt((a) => a + 1)}>
+            Amount unavailable — retry
+          </button>
+        ) : (
+          <span>{amountLabel}</span>
+        )}
         <span className="muted" title={row.txHash}>
           {truncateHash(row.txHash)}
         </span>
