@@ -308,15 +308,16 @@ describe("handleGetEvents", () => {
     });
   });
 
-  it("handoff fromLedger is 0 when we have indexed nothing at all for the allowed set", async () => {
+  it("cache miss (NOT -32002 handoff) when we have indexed nothing at all for the allowed set — tip is unknown, not just behind (review fix)", async () => {
     const deps = makeDeps([]);
     const outcome = await handleGetEvents(
       { filters: filtersFor(ALLOWED), startLedger: 0, pagination: {} },
       deps,
     );
-    expect(outcome.ok).toBe(false);
-    if (outcome.ok) throw new Error("expected error");
-    expect(outcome.error.data).toEqual({ reason: "retention_threshold", fromLedger: 0 });
+    expect(outcome).toEqual({
+      ok: false,
+      error: { code: CACHE_MISS_CODE, message: "bootnode warming up; retry later" },
+    });
   });
 
   it("cache miss: cursor doesn't resolve to any row in the allowed contract set -> -32004", async () => {

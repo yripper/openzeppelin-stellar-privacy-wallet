@@ -249,12 +249,25 @@ export async function handleGetEvents(rawParams: unknown, deps: BootnodeHandlerD
   }
 
   const bounds = await deps.repo.getLedgerBounds(deps.allowedContractIds);
-  const ourTip = bounds?.max ?? -1;
 
   if (rows.length === 0) {
+    // `bounds === null` means we have indexed NOTHING at all for the
+    // allowed contract set yet (tip unknown — e.g. the backfill hasn't run
+    // against this deployment) — this is the reference's `!tip_known` case
+    // (`rpc.rs:171-174`, `cache_miss_for_tip(0)` -> "bootnode warming up;
+    // retry later"), NOT a retention handoff: there is no tip to hand off
+    // FROM. Getting this wrong matters functionally, not just semantically
+    // — the SDK's sync loop retries a `-32004` with backoff (several
+    // rounds) but treats `-32002` as "stop asking me, go to your own RPC
+    // instead", which for a genuinely empty/not-yet-backfilled deployment
+    // sends it straight to a retention-gapped RPC and fails loudly instead
+    // of giving the backfill a chance to land.
+    if (bounds === null) {
+      return err(CACHE_MISS_CODE, "bootnode warming up; retry later");
+    }
     return err(RETENTION_HANDOFF_CODE, "Continue syncing on your RPC endpoint", {
       reason: "retention_threshold",
-      fromLedger: ourTip + 1,
+      fromLedger: bounds.max + 1,
     });
   }
 

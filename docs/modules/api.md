@@ -72,6 +72,57 @@ REST and bootnode read paths; `bootnode_pages` (Task 5) is left UNUSED —
 serving live from `events` was simpler and the brief explicitly didn't
 mandate speculative caching.
 
+## ⚠️ Required migration step when deploying Task 9's worker change
+
+**Any deployment that ran the worker BEFORE this task's commit** (i.e., has
+a `cursors` row for the OLD 2-contract SPP stream key) **must re-run the
+backfill loader once, after deploying, before starting the new worker.**
+Skipping this silently stalls SPP ingestion — no crash, just a quiet
+per-tick failure loop.
+
+**Why**: Task 9 changed the SPP stream's tracked contract set from 2
+contracts (`pool`, `publicKeyRegistry`) to the SDK's full 4-contract sync
+set (`pool`, `poolEurc`, `aspMembership`, `publicKeyRegistry` —
+`worker.ts`'s `buildSppContractIds()`). The `cursors` table row the SPP
+stream reads/writes is keyed by `` `spp:${contractIds.join(",")}` ``
+(`buildSppStreamKey()`) — changing the contract set changes this key. An
+existing deployment's `cursors` table still has a row under the OLD key;
+there is no row under the NEW key.
+
+**Failure mode if skipped**: the worker's next `tick()` calls
+`repo.getCursor(newKey)`, gets `null` (the new key has never been written —
+the old key's row is just orphaned, still sitting there unused), and
+`makeBootnodeThenRpcSource` treats a `null` cursor as "first poll, start in
+bootnode mode" (see `poller.ts`'s module doc). It calls Nethermind's public
+bootnode, which is dead — every request gets `-32602 unsupported filters`
+(see the "Live-verification blocker" gotcha below). The stream fails every
+tick, backs off up to the 60s cap, and SPP ingestion silently stops forever
+— the CT stream is unaffected (per-stream isolation), so nothing else looks
+broken, and the only symptom is a repeating `[worker] stream "spp:..."
+failed` line in logs.
+
+**Required action**:
+```
+DATABASE_URL=... pnpm --filter @grantfox/api backfill:spp:load
+```
+This runs `scripts/load-backfill.ts`, which calls the real, idempotent
+`initSppCursor(repo, SPP_STREAM_KEY, lastBackfilledLedger)` —
+`SPP_STREAM_KEY` now resolves to the NEW 4-contract key (it imports
+`buildSppStreamKey()`, see the Gotchas entry below) — writing that key's
+cursor straight to RPC mode (`rpc:ledger:<lastBackfilledLedger + 1>`). The
+worker's next poll for the SPP stream then goes straight to the RPC,
+skipping the dead bootnode entirely, exactly as the original Task 8.5
+backfill did for the old key. Safe to re-run on an already-migrated
+deployment: `insertEvents` is on-conflict-do-nothing and `initSppCursor`
+never regresses an already-`rpc:`-mode cursor (verified by
+`spp-backfill-loader.test.ts`'s "does NOT overwrite an existing rpc:-mode
+cursor" case).
+
+A brand-new deployment (empty `cursors` table, no prior worker run) does
+NOT need this as a separate step — running `backfill:spp:load` once, as
+already documented in Task 8.5's Testing section below, is sufficient;
+there is no old key to orphan.
+
 ## Structure
 
 | File | Purpose |
@@ -177,6 +228,79 @@ mandate speculative caching.
 - Local Postgres: repo-root `docker-compose.yml` (`postgres:16-alpine`, user/pass/db `grantfox`, host port `${DB_HOST_PORT:-5433}`). `DATABASE_URL` default: `postgres://grantfox:grantfox@localhost:5433/grantfox` — set in repo-root `.env` and `.env.example`.
 - `events.id` format (`${ledger}-${txHash}-${opIndex}-${eventIndex}`) matches `@ctd/sdk`'s `naturalEventId` (`packages/ctd-sdk/src/chain/events.ts:236`). `api/src/lib/soroban-events.ts` exports its own `naturalEventId`/`eventIndexFromId` that REPLICATE (not import) that logic — `@ctd/sdk` pulls in the zk-proving stack (`@aztec/bb.js`, `@noir-lang/noir_js`), which `@grantfox/api` has no other reason to depend on. `poller.ts` constructs `events` rows straight from `RawEvent` (which already carries the correctly-formatted `id`), not a third reimplementation.
 
+## Consuming CT events from this API (read before wiring up a client)
+
+**`@ctd/sdk`'s `IndexerClient` (`packages/ctd-sdk/src/chain/indexer.ts`) and
+anything built on top of it — `hybridFetchEvents`
+(`packages/ctd-sdk/src/chain/event-source.ts:82`) and, transitively,
+`StateEngine.sync()` (`packages/ctd-sdk/src/state/engine.ts:61,128`) —
+MUST NOT be pointed at this API's `/contracts/:contractId/events` for CT
+events as-is.** It will not throw or error visibly; it will silently
+produce an EMPTY event stream, and if that empty stream reaches
+`StateEngine`, the wallet's reconstructed balance state is wrong with no
+error surfaced.
+
+**Why**: `IndexerClient.parseIndexerEvent`
+(`indexer.ts:186-202`) decodes `topic`/`value` assuming Goldsky's
+JSON-ScVal wire shape (the format the reference `@ctd/indexer`'s Cloudflare
+Worker + Goldsky pipeline actually produces). It calls `scvString(topics[0])`
+(`indexer.ts:269-280`), which — when the value is ALREADY a plain string —
+returns it verbatim (`typeof value === "string"` → return as-is). Our
+`events` table stores `topic`/`value` as base64-encoded XDR strings (the
+SAME representation `soroban-events.ts`/`bootnode-client.ts` always
+produce; this API has no Goldsky pipeline and never will for this data),
+so `topics[0]` is a base64 blob, not a decoded symbol like `"register"`.
+`KNOWN.has(<base64 blob>)` (`indexer.ts:190`, `KNOWN` defined
+`events.ts:119`) is false for every row, so `parseIndexerEvent` returns
+`null` for every single event — no thrown error, just nothing decoded.
+
+This propagates silently up the stack: `hybridFetchEvents`
+(`event-source.ts:82-142`) merges the indexer leg's (empty) results with
+the RPC leg's and returns normally — its own module doc
+(`event-source.ts:17-26`) explicitly calls out that a THROWN indexer error
+is deliberately NOT swallowed, specifically to avoid "turning one transient
+failure into unrecoverable data loss" — but an indexer that returns
+zero events with no error is indistinguishable from "there were genuinely
+no CT events in that range," so this specific failure mode (wrong data
+FORMAT, not a network/availability failure) is NOT caught by that
+protection. `StateEngine.sync()` (`state/engine.ts:128`) would then
+reconstruct balances from an incomplete event stream — the exact
+"unrecoverable data loss" scenario the module doc warns about, just
+reached by a different door than the one it defends against.
+
+**Routing decision (controller-approved, made outside this task): the fix
+lands in Task 11 (wallet), not here.** The correct shape is a THIN
+XDR-decoding client that runs this API's base64-XDR rows through
+`ctd-sdk`'s EXISTING XDR decoder — reusing `buildConfidentialEvent`
+(`events.ts:154-205`, already exported and explicitly designed as the
+source-agnostic "single source of truth for each event type's shape," per
+its own doc comment: "Both `parseEvent` (RPC/XDR) and `parseIndexerEvent`
+(Goldsky/JSON) call this with their own `addr`/`data` adapters, so the
+field mapping cannot drift between sources") — NOT a server-side transform
+that reshapes our stored rows into Goldsky-JSON on the way out. `parseEvent`
+itself (`events.ts:378-392`) is the RPC/XDR reference implementation to
+mirror (not import — it's a private, unexported function operating on the
+SDK's already-parsed `rpc.Api.EventResponse`, not a raw string): decode
+each base64 `topic`/`value` string back into an `xdr.ScVal` via the SDK's
+standard `xdr.ScVal.fromXDR(str, "base64")` (the exact inverse of
+`soroban-events.ts`'s own `.toXDR("base64")` encoding — same codec, round
+trip), then supply `buildConfidentialEvent` with `addr`/`data` adapters
+shaped like `parseEvent`'s own (`Address.fromScVal`, and a `dataMap`
+equivalent to `events.ts:395-409`'s XDR-backed one). Building this belongs
+to whichever task actually wires a wallet client to this API (Task 11 per
+the current plan) — not duplicated here as a server-side Goldsky
+transform, which the routing decision explicitly rejected (this API's
+`events` table has no reason to ever hold Goldsky-shaped data; XDR is its
+native, byte-accurate representation, and the SPP bootnode leg needs XDR
+strings verbatim regardless — see the handler's module doc).
+
+**This does NOT affect the bootnode-protocol leg** (`POST /rpc`'s
+`getEvents`) — the SPP Rust SDK's OWN deserializer
+(`sdk/stellar/src/rpc.rs`'s `Event` struct) expects base64-XDR `topic`/
+`value` NATIVELY, byte-for-byte matching what this API already serves (see
+the "deserializer byte-for-byte" citations in the task-9 report). Only the
+REST `IndexerClient` path is affected.
+
 ## Gotchas & invariants
 
 - `insertEvents` is on-conflict-do-nothing **by `id` only** — a re-inserted row with the same id but different payload is silently ignored (the first write wins). This is intentional for idempotent worker restarts, but means a genuine data-correction requires a manual `UPDATE`, not a re-insert.
@@ -208,10 +332,11 @@ mandate speculative caching.
 - **RESOLVED by Task 9 — `SPP_STREAM_KEY` (`spp-backfill-loader.ts`) is no longer a hand-replication of `worker.ts`'s SPP stream key; it imports `buildSppStreamKey()`.** (Kept for history: `worker.ts`'s `buildStreamStates()` was previously private/unexported, so Task 8.5 hand-copied the computation and flagged the drift risk explicitly — "the safer long-term fix would be exporting a `buildSppStreamKey()` helper from `worker.ts`." Task 9 did exactly that.) The literal-string test in `spp-backfill-loader.test.ts` still pins the value (now `spp:<pool>,<poolEurc>,<aspMembership>,<publicKeyRegistry>`, 4 contracts) as belt-and-suspenders.
 - **RESOLVED by Task 9 — `packages/shared/src/config.ts` now has `TESTNET.spp.poolEurc`.** (Kept for history: Task 8.5 found `config.ts`'s `TESTNET.spp` block covered only 3 of the SDK's 4-contract sync set — `pool`/`aspMembership`/`publicKeyRegistry`, missing the EURC pool `CAJJT5YV4BMFTHEOO5FGO2G56TEJKM4G4FW7FS4DYBLLLLHSAYUZWT74` — and flagged it rather than fixing it as an out-of-scope side effect.) `backfill-spp.ts`'s own `POOL_EURC_CONTRACT_ID` hardcode was DELIBERATELY left as-is per the task-9 brief ("Task 8.5's script may keep its hardcode") — it's a one-shot archival-recovery script, not a live code path, so there's no drift risk worth the touch; its value is identical to `TESTNET.spp.poolEurc`.
 - **RESOLVED by Task 9 — the worker's live SPP stream now tracks all 4 SPP contracts, not 2.** (Kept for history: Task 7's `worker.ts` originally set `sppContractIds = [TESTNET.spp.pool, TESTNET.spp.publicKeyRegistry]`, so `asp_membership`/the EURC pool's backfilled history sat in `events` with no live stream polling for NEW events on them.) `buildSppContractIds()` now returns all 4 (`pool`, `poolEurc`, `aspMembership`, `publicKeyRegistry`) and `worker.ts`'s `buildStreamStates()` uses it directly — this was closed as a carried-gap prerequisite for Task 9's bootnode endpoint (its allow-list must be set-equal to the SDK's `all_contract_ids()` request, which is these same 4 contracts).
-- **The bootnode handler's handoff/cache-miss semantics (Task 9) DELIBERATELY diverge from the reference `tools/bootnode/src/rpc.rs`'s.** The reference is a partial, asynchronously-populated CACHE in front of the real RPC (`ledger_tip`/`in_sync` atomics, a background indexer that may not have reached a given page yet, `is_terminal_empty` tip-self-loop detection) — hence its multi-branch `cache_miss_or_handoff`. OUR bootnode serves synchronously from a FULLY MATERIALIZED `events` table (Task 8.5's full backfill + continuous live-follow), so there's no "known but not yet cached" state to track. Collapsed to two rules (full rationale in `modules/bootnode/handler.ts`'s module doc): cache miss (`-32004`) = the `pagination.cursor` doesn't resolve to any row we have for the allowed contract set; handoff (`-32002`, `fromLedger = ourTip + 1`) = the resolved query (by `startLedger` or `cursor`) returns zero rows — mathematically equivalent to "beyond our indexed tip" for the `startLedger` case. Verified live against the real server + real backfilled data for all 5 of the brief's required cases (valid page, both-params error, unsupported-filter error, handoff, cache miss) — transcript in the task-9 report.
+- **The bootnode handler's handoff/cache-miss semantics (Task 9) DELIBERATELY diverge from the reference `tools/bootnode/src/rpc.rs`'s.** The reference is a partial, asynchronously-populated CACHE in front of the real RPC (`ledger_tip`/`in_sync` atomics, a background indexer that may not have reached a given page yet, `is_terminal_empty` tip-self-loop detection) — hence its multi-branch `cache_miss_or_handoff`. OUR bootnode serves synchronously from a FULLY MATERIALIZED `events` table (Task 8.5's full backfill + continuous live-follow), so there's no "known but not yet cached" state to track. Collapsed to three rules (full rationale in `modules/bootnode/handler.ts`'s module doc): cache miss (`-32004`) = EITHER the `pagination.cursor` doesn't resolve to any row we have for the allowed contract set, OR (review fix — see below) we have indexed NOTHING at all yet for the allowed set (tip unknown, mirroring the reference's `!tip_known -> cache_miss_for_tip(0)`, `rpc.rs:171-174`); handoff (`-32002`, `fromLedger = ourTip + 1`) = ONLY once a tip is known and the resolved query (by `startLedger` or `cursor`) returns zero rows — equivalent to "beyond our indexed tip" for the `startLedger` case. Verified live against the real server + real backfilled data for all 5 of the brief's required cases (valid page, both-params error, unsupported-filter error, handoff, cache miss) — transcript in the task-9 report.
+- **Review fix: an empty/not-yet-backfilled `events` table used to return a FALSE `-32002` handoff (`fromLedger: 0`) instead of `-32004`.** The bug: `getLedgerBounds` returning `null` (zero rows for the allowed contract set — nothing backfilled yet) was treated as "tip = -1, handoff at fromLedger 0" — a real handoff response, telling the client to abandon this bootnode and resume on its OWN RPC. Consequence, traced through the SPP SDK's actual sync loop (`sdk/client/src/sync.rs`, verified by reading, not assumed): `-32002` is matched by `is_retention_handoff`/`is_retention_handoff_err` (`sync.rs:311,344`, checking `RETENTION_HANDOFF_CODE = -32_002` at `sync.rs:22`) and triggers IMMEDIATE abandonment — `storage.clear_indexing_cursors()` then `"resuming on main RPC"` (`sync.rs:404-407,426-432`), no retry — landing on a main RPC that's retention-gapped for SPP history (see the "Live-verification blocker" gotcha below) and failing with a confusing error. A genuine `-32004` does NOT match `is_retention_handoff` and instead falls into the generic-error retry branch (`sync.rs:434-446`), which retries with a backoff sleep up to `BOOTNODE_CATCH_UP_MAX_FAILURES = 10` rounds (`sync.rs:19`) before giving up — giving a slow/not-yet-run backfill real time to land instead of bailing on the first response. Fixed: `bounds === null` now returns `CACHE_MISS_CODE` with the reference's own "bootnode warming up; retry later" message (`rpc.rs:267`), matching `cache_miss_for_tip(0)` exactly. Covered by `handler.test.ts`'s "cache miss (NOT -32002 handoff) when we have indexed nothing at all" case.
 - **`getEvents`'s response `latestLedger`/`latestLedgerCloseTime` are the REAL upstream network tip (a live proxy call, same mechanism as `getLatestLedger`), NOT our own indexed-events max** — this matters functionally, not just cosmetically: the SPP Rust SDK's own indexer compares `progress_ledger >= latest_ledger` to decide "have I caught up this round" (`resources/stellar-private-payments/sdk/stellar/src/indexer.rs:155`), so self-reporting our indexed max here would make every client think it reached the chain tip the moment it reached whatever WE happen to have indexed. `oldestLedger` IS our own archive floor (`getLedgerBounds`'s `min`, a real value — free, same query call as the tip-for-handoff check); `oldestLedgerCloseTime` is the oldest row IN THE RETURNED PAGE (not a 3rd DB round-trip to fetch the archive floor row's own timestamp) — deliberate, since grep confirms neither `oldestLedger`/`oldestLedgerCloseTime` is consumed by the SDK's sync logic (only `latestLedger`/`cursor` are).
 - **Events are ordered by the REAL chain-position tuple `(ledger, txIndex, opIndex, eventIndex)`, not string `id` order** — `listEventsFromLedger`/`listEventsAfterId` (`db/repo.ts`, Task 9) and the REST/bootnode routes that page through them. `events.id` (`${ledger}-${txHash}-${opIndex}-${eventIndex}`) has no zero-padding, unlike the reference `@ctd/indexer`'s fixed-width Goldsky ids that `ORDER BY id ASC` can rely on — a naive port of that pattern here would sort e.g. ledger `1000000000` before `999999999` lexicographically. `repo.test.ts` proves this with a deliberately mixed-digit-width fixture.
-- **`api/src/modules/activity/routes.ts`'s `/contracts/:contractId/events` and `/accounts/:address/activity` guarantee wire-envelope compatibility with `@ctd/sdk`'s `IndexerClient`, but NOT CT-event content decoding through it.** `IndexerClient.parseIndexerEvent` (`packages/ctd-sdk/src/chain/indexer.ts:186-202`) expects Goldsky's JSON-ScVal shape (e.g. `topic[0]` decoding to a plain symbol string like `"register"` via `scvString`, then checked against `KNOWN`). Our `events` table stores base64-XDR strings for `topic`/`value` (same representation the RPC/bootnode sources always produced — this API has no Goldsky pipeline), so `topics[0]` is a base64 blob, `scvString` returns it verbatim, `KNOWN.has(that blob)` is false, and `parseIndexerEvent` returns `null` for EVERY row — silently, no thrown error. If a future task points `IndexerClient` at this server for CT events, it will see an empty event stream. This is fine for the bootnode/SPP leg (the Rust SDK's OWN deserializer, `sdk/stellar/src/rpc.rs`'s `Event` struct, expects base64-XDR `topic`/`value` natively — see the handler's module doc) but is a real, documented limitation for `IndexerClient` specifically. Full citation trail in the task-9 report's self-review.
+- **`api/src/modules/activity/routes.ts`'s `/contracts/:contractId/events` guarantees wire-envelope compatibility with `@ctd/sdk`'s `IndexerClient`, but NOT CT-event content decoding through it — `IndexerClient`/`hybridFetchEvents` MUST NOT be pointed at this API for CT events as-is.** See the dedicated "Consuming CT events from this API" section above for the full explanation (base64-XDR vs. Goldsky-JSON, why it fails SILENTLY not loudly, and the required Task 11 adapter approach) — this entry is just a pointer so it's not missed while skimming Gotchas.
 - **Two of the four SPP contracts genuinely have ZERO on-chain events as of 2026-08-01** — verified both via `order=desc&limit=1` (empty `_embedded.records`) and a full `order=asc` page fetch, not just an artifact of pagination: `pool_eurc` and `asp_membership`. Only `pool` (500) and `public_key_registry` (18) have activity. Not a bug in the fetch logic — `pool` matches the brief's expected 500 exactly, and a live re-run of `backfill-spp.ts` reproduced identical results (byte-for-byte, excluding `generatedAt`) on a second independent run.
 - **`api/scripts/*.ts` are NOT part of `api/tsconfig.json`'s `include` (`src/**/*` only)** — they run via `tsx` directly (same convention as `worker.ts`'s dev script and the repo-root `scripts/smoke-ct.ts`) and are excluded from `pnpm --filter @grantfox/api build`. Manually typechecked clean during Task 8.5 review via a throwaway `tsconfig` extending the real one with `scripts/**/*` added to `include` — not committed, since it would otherwise change `build`'s output scope.
 - `fetchJsonWithRetry` (internal to `spp-archive-client.ts`) retries BOTH non-OK 429/5xx responses AND thrown network-level errors (DNS failure, connection reset — `fetch` rejects rather than resolving for these, so they never reach a `res.ok` check). The network-error branch was added mid-task after a live `backfill-spp.ts` run hit a genuine `ECONNRESET` partway through — without it, one transient blip anywhere in a run touching hundreds of events would abort the whole script with zero partial progress saved (the fixture is only written at the very end, after every event resolves). Both branches share `backoffDelayMs` (imported from `worker.ts`, not re-implemented), capped at `MAX_RETRIES = 6`.
