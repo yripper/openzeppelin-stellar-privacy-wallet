@@ -227,3 +227,23 @@ button[type="button"]:not(.tab) {
 .activity-type {
   font-weight: 600;
 }
+
+/* Task 12 (SPP): the session-account explainer. Collapsed by default — the
+   whole point of the shielded tab's design is that the session address is an
+   implementation detail the user only opens when they need to receive. */
+.info-tip {
+  margin-bottom: 0.75rem;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 0.375rem;
+}
+
+.info-tip summary {
+  cursor: pointer;
+  color: var(--accent);
+  font-size: 0.875rem;
+}
+
+.info-tip > *:not(summary) {
+  margin-top: 0.5rem;
+}

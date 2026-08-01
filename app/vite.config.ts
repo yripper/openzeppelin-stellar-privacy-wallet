@@ -143,7 +143,21 @@ export default defineConfig({
     // (noir_js itself too, so its own module graph isn't half-optimized)
     // fixes it — Vite then serves them straight from node_modules, where
     // `import.meta.url` correctly resolves next to the real `.wasm` files.
-    exclude: ["@aztec/bb.js", "@noir-lang/noir_js", "@noir-lang/acvm_js", "@noir-lang/noirc_abi"],
+    //
+    // `stellar-private-payments` (Task 12) is excluded for the SAME
+    // `import.meta.url`-relative-wasm reason: its wasm-bindgen glue
+    // (`dist/stellar_private_payments_sdk_web.js`) locates its own 2 MB
+    // `_bg.wasm` as a sibling via `import.meta.url`. Its two Web Workers do
+    // NOT rely on that default — `lib/spp.ts` passes explicit
+    // `/spp/workers/*.js` URLs (the vendored copy, where `prover-worker.js`'s
+    // `new URL('../circuits/', import.meta.url)` finds the Circom artifacts).
+    exclude: [
+      "@aztec/bb.js",
+      "@noir-lang/noir_js",
+      "@noir-lang/acvm_js",
+      "@noir-lang/noirc_abi",
+      "stellar-private-payments",
+    ],
     esbuildOptions: {
       define: { global: "globalThis" },
     },

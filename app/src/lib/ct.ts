@@ -51,11 +51,17 @@ import withdrawCircuit from "@ctd/sdk/circuits/withdraw.json";
 import { TESTNET, buildCtInvokeTx } from "@grantfox/shared";
 
 import { kit } from "./kit.js";
+import { API_URL } from "./api-url.js";
 import { ensureBrowserBackend } from "./bb-loader.js";
 import { ApiIndexerClient } from "./ct-indexer.js";
 
-/** `@grantfox/api`'s base URL — the same base the wallet reads its activity feed from. */
-export const API_URL = (import.meta.env.VITE_API_URL as string | undefined) ?? "http://localhost:3000";
+/**
+ * `@grantfox/api`'s base URL — the same base the wallet reads its activity feed
+ * from. Re-exported (the definition moved to `api-url.ts` in Task 12, so the
+ * SPP rail can point its bootnode at the same backend without importing this
+ * module's heavy `@ctd/sdk`/bb.js graph).
+ */
+export { API_URL };
 
 type CircuitName = "register" | "transfer" | "withdraw";
 

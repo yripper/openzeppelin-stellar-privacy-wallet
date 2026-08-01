@@ -2,7 +2,7 @@
 
 > **Living document.** Read this before modifying the module. Update it in the same change whenever the module's behavior, endpoints, files, or dependencies change.
 
-**Source:** `api/` · **Last verified:** 2026-08-01 (Task 11)
+**Source:** `api/` · **Last verified:** 2026-08-01 (Task 12 — no code change; `POST /rpc` verified live against the SPP SDK's real sync loop, see "Task 12" below)
 
 ## Purpose
 
@@ -245,6 +245,25 @@ there is no old key to orphan.
 - (Task 8.5) `api/src/lib/spp-archive-client.ts` calls two public third-party APIs directly via global `fetch` (no new npm dependency): `https://api.stellar.expert/explorer/testnet` (the archive) and `https://horizon-testnet.stellar.org` (txHash resolution). Only reached by running `backfill-spp.ts`; never called by `worker.ts` or any test.
 - Local Postgres: repo-root `docker-compose.yml` (`postgres:16-alpine`, user/pass/db `grantfox`, host port `${DB_HOST_PORT:-5433}`). `DATABASE_URL` default: `postgres://grantfox:grantfox@localhost:5433/grantfox` — set in repo-root `.env` and `.env.example`.
 - `events.id` format (`${ledger}-${txHash}-${opIndex}-${eventIndex}`) matches `@ctd/sdk`'s `naturalEventId` (`packages/ctd-sdk/src/chain/events.ts:236`). `api/src/lib/soroban-events.ts` exports its own `naturalEventId`/`eventIndexFromId` that REPLICATE (not import) that logic — `@ctd/sdk` pulls in the zk-proving stack (`@aztec/bb.js`, `@noir-lang/noir_js`), which `@grantfox/api` has no other reason to depend on. `poller.ts` constructs `events` rows straight from `RawEvent` (which already carries the correctly-formatted `id`), not a third reimplementation.
+
+### Task 12 — `POST /rpc` has a real, load-bearing consumer now
+
+The browser wallet's shielded (SPP) rail points the `stellar-private-payments`
+SDK's `bootnodeUrl` straight at this server (`app/src/lib/spp.ts`'s
+`SPP_BOOTNODE_URL = ${VITE_API_URL}/rpc`). This is not a nice-to-have: testnet
+Soroban RPC's retention window does not reach the pool's deployment ledger, so
+the SDK's `Indexer::init` fails with `RpcSyncGap` and it *must* fall back to a
+bootnode to build local pool state at all (`sdk/client/src/sync.rs:455-474`),
+and Nethermind's own public bootnode rejects every filter set (see above).
+
+Verified end to end on 2026-08-01 against a fresh browser profile: the SDK
+logged `main RPC sync gap, trying bootnode at http://localhost:3801/rpc`, drew
+its history from `POST /rpc` (4 requests, all `200`), then logged `bootnode
+handoff, resuming on main RPC` — i.e. the `-32002` this server returns at its
+tip lands in the SDK's handoff branch exactly as `handler.ts` intends, and the
+client resumes on its own RPC. **Consequence: the SPP backfill
+(`pnpm --filter @grantfox/api backfill:spp:load`) is a hard prerequisite for the
+wallet's Shielded tab, not just for this API's own completeness.**
 
 ## Consuming CT events from this API (read before wiring up a client)
 
