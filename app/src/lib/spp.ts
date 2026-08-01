@@ -516,6 +516,13 @@ export class SppRail {
   /**
    * Release what the SDK actually lets us release.
    *
+   * **Currently unwired — nothing calls this.** The one path that used to
+   * (disposing a previous rail on a wallet switch) was removed once it became
+   * clear the switch cannot be done safely in-page at all; the operative
+   * protection is now {@link connectSppRail}'s `SppWalletSwitchError` reject.
+   * This is kept, and kept honest, because it is the correct thing to call the
+   * day the SDK grows a real teardown — not because it is doing any work today.
+   *
    * **This does NOT terminate the storage or prover workers, and cannot.**
    * `Storage.open()` spawns a fresh worker per call
    * (`sdk/web/src/storage.rs:75-87`) and `Client.new` immediately takes a

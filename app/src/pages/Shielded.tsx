@@ -12,7 +12,7 @@
  * `CtProvider`) because `spp.ts` already memoizes the rail page-wide — one
  * consumer, no context needed.
  */
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useReducer, useState, type FormEvent } from "react";
 import { StrKey } from "@stellar/stellar-sdk";
 import { TESTNET } from "@grantfox/shared";
 
@@ -113,14 +113,66 @@ export function resolveNotices(
   return { notice: undefined, staleWarning: undefined };
 }
 
+/** Everything the connect effect owns, as one value — see {@link connectReducer}. */
+export interface ConnectState {
+  rail: SppRail | undefined;
+  phase: SppConnectPhase;
+  error: string | undefined;
+  /** The failure was specifically "this page already holds another wallet's rail". */
+  needsReload: boolean;
+}
+
+export type ConnectEvent =
+  | { type: "attempt" }
+  | { type: "phase"; phase: SppConnectPhase }
+  | { type: "connected"; rail: SppRail }
+  | { type: "failed"; error: unknown };
+
+export const initialConnectState: ConnectState = {
+  rail: undefined,
+  phase: "loading-sdk",
+  error: undefined,
+  needsReload: false,
+};
+
+/**
+ * Connect-state transitions, as a reducer so the LIFECYCLE is unit-testable
+ * without a component-render harness (this repo has none).
+ *
+ * The rule that earns it: **failure state is scoped to one attempt.** As four
+ * independent `useState`s, `error`/`needsReload` were written only in the
+ * effect's failure path and never cleared, so the "Reload to switch" gate
+ * outlived its cause — connect wallet A, switch to B (rejected with
+ * `SppWalletSwitchError`), reconnect A (succeeds, real rail in hand), and the
+ * render gate still blocked a perfectly functional tab. `attempt` therefore
+ * clears both, and `connected` clears them again on the way in.
+ *
+ * `attempt` deliberately KEEPS `rail`: a re-run for the same wallet resolves
+ * from `connectSppRail`'s memo to the same instance, and blanking it would
+ * flash the whole tab back to its loading state for nothing.
+ */
+export function connectReducer(state: ConnectState, event: ConnectEvent): ConnectState {
+  switch (event.type) {
+    case "attempt":
+      return { ...state, error: undefined, needsReload: false };
+    case "phase":
+      return { ...state, phase: event.phase };
+    case "connected":
+      return { ...state, rail: event.rail, error: undefined, needsReload: false };
+    case "failed":
+      return {
+        ...state,
+        error: event.error instanceof Error ? event.error.message : String(event.error),
+        needsReload: event.error instanceof SppWalletSwitchError,
+      };
+  }
+}
+
 export default function Shielded() {
   const { contractId, bundle } = useWallet();
 
-  const [rail, setRail] = useState<SppRail | undefined>(undefined);
-  const [connectPhase, setConnectPhase] = useState<SppConnectPhase>("loading-sdk");
-  const [connectError, setConnectError] = useState<string | undefined>(undefined);
-  /** Set when the connect failed specifically because this page already holds another wallet's rail. */
-  const [needsReload, setNeedsReload] = useState(false);
+  const [connect, dispatchConnect] = useReducer(connectReducer, initialConnectState);
+  const { rail, phase: connectPhase, error: connectError, needsReload } = connect;
   const [view, setView] = useState<SppView | undefined>(undefined);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -159,18 +211,19 @@ export default function Shielded() {
   useEffect(() => {
     if (!contractId || !bundle) return;
     let cancelled = false;
+    // Clears any previous attempt's failure state, so a stale "Reload to
+    // switch" gate can never survive a fresh (and possibly succeeding) connect.
+    dispatchConnect({ type: "attempt" });
     connectSppRail(bundle.sppRootSecret, contractId, {
-      onPhase: (next) => {
-        if (!cancelled) setConnectPhase(next);
+      onPhase: (phase) => {
+        if (!cancelled) dispatchConnect({ type: "phase", phase });
       },
     })
       .then((connected) => {
-        if (!cancelled) setRail(connected);
+        if (!cancelled) dispatchConnect({ type: "connected", rail: connected });
       })
       .catch((error: unknown) => {
-        if (cancelled) return;
-        setNeedsReload(error instanceof SppWalletSwitchError);
-        setConnectError(error instanceof Error ? error.message : String(error));
+        if (!cancelled) dispatchConnect({ type: "failed", error });
       });
     return () => {
       cancelled = true;

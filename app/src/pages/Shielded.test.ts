@@ -12,7 +12,15 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { describeResult, resolveNotices } from "./Shielded.js";
+import { SppWalletSwitchError, type SppRail } from "../lib/spp.js";
+import {
+  connectReducer,
+  describeResult,
+  initialConnectState,
+  resolveNotices,
+  type ConnectEvent,
+  type ConnectState,
+} from "./Shielded.js";
 
 describe("resolveNotices", () => {
   const outcome = { kind: "ok", text: "Shielding 10 XLM confirmed in 1 transaction(s) — abc…" } as const;
@@ -89,5 +97,87 @@ describe("describeResult", () => {
       "Shielding"
     );
     expect(notice.text).not.toContain("already submitted");
+  });
+});
+
+describe("connectReducer", () => {
+  const RAIL_A = { sessionAddress: "GA…" } as unknown as SppRail;
+  const RAIL_B = { sessionAddress: "GB…" } as unknown as SppRail;
+
+  /** Replay a whole effect sequence, exactly as the component dispatches it. */
+  function run(events: ConnectEvent[], from: ConnectState = initialConnectState): ConnectState {
+    return events.reduce(connectReducer, from);
+  }
+
+  it("tracks phases through a successful connect", () => {
+    const state = run([
+      { type: "attempt" },
+      { type: "phase", phase: "syncing-history" },
+      { type: "phase", phase: "deriving-keys" },
+      { type: "connected", rail: RAIL_A },
+    ]);
+    expect(state).toEqual({
+      rail: RAIL_A,
+      phase: "deriving-keys",
+      error: undefined,
+      needsReload: false,
+    });
+  });
+
+  it("records a wallet-switch rejection as the reload gate", () => {
+    const state = run([{ type: "attempt" }, { type: "failed", error: new SppWalletSwitchError() }]);
+    expect(state.needsReload).toBe(true);
+    expect(state.error).toContain("page reload");
+  });
+
+  it("records an ordinary failure WITHOUT arming the reload gate", () => {
+    const state = run([{ type: "attempt" }, { type: "failed", error: new Error("api server down") }]);
+    expect(state).toMatchObject({ needsReload: false, error: "api server down" });
+  });
+
+  it("stringifies a non-Error rejection rather than rendering [object Object]", () => {
+    expect(run([{ type: "failed", error: "boom" }]).error).toBe("boom");
+  });
+
+  it("clears a stale reload gate when the next attempt begins", () => {
+    // THE REGRESSION: wallet A → switch to B (rejected) → reconnect A. Before
+    // this reducer, `needsReload` was never cleared, so the render gate blocked
+    // a tab whose rail had connected perfectly well.
+    const state = run([
+      { type: "attempt" },
+      { type: "connected", rail: RAIL_A },
+      { type: "attempt" },
+      { type: "failed", error: new SppWalletSwitchError() },
+      { type: "attempt" }, // user reconnects wallet A; the memo hits and resolves
+      { type: "connected", rail: RAIL_A },
+    ]);
+    expect(state).toEqual({
+      rail: RAIL_A,
+      phase: "loading-sdk",
+      error: undefined,
+      needsReload: false,
+    });
+  });
+
+  it("clears failure state on `connected` even if no `attempt` preceded it", () => {
+    const failed = run([{ type: "attempt" }, { type: "failed", error: new SppWalletSwitchError() }]);
+    const recovered = connectReducer(failed, { type: "connected", rail: RAIL_B });
+    expect(recovered).toMatchObject({ rail: RAIL_B, error: undefined, needsReload: false });
+  });
+
+  it("keeps the existing rail across a re-attempt, so the tab does not flash back to loading", () => {
+    const connected = run([{ type: "attempt" }, { type: "connected", rail: RAIL_A }]);
+    expect(connectReducer(connected, { type: "attempt" }).rail).toBe(RAIL_A);
+  });
+
+  it("leaves the rail in place when a later attempt fails, so state is never half-torn", () => {
+    const state = run([
+      { type: "attempt" },
+      { type: "connected", rail: RAIL_A },
+      { type: "attempt" },
+      { type: "failed", error: new Error("rpc down") },
+    ]);
+    expect(state.rail).toBe(RAIL_A);
+    expect(state.error).toBe("rpc down");
   });
 });
