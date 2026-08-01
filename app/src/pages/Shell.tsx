@@ -1,14 +1,16 @@
 /**
- * Wallet home / shell layout. The tab bar is a placeholder for the flows
- * later tasks add (Task 11: CT send/receive, Task 12: SPP deposit/withdraw,
- * a later task: activity feed) — this task only scaffolds the shell and
- * onboarding, so the non-Wallet tabs render a "coming soon" stub.
+ * Wallet home / shell layout. The "Wallet" tab renders the Confidential
+ * Token dashboard (Task 11: register/deposit/merge/withdraw/send/activity —
+ * `pages/Confidential.tsx`). "Deposit" (Task 12: SPP) and "Send"/"Activity"
+ * (superseded — CT's send + activity live inside the Wallet tab's
+ * Confidential dashboard, alongside its balances) remain placeholders.
  */
 import { useState } from "react";
 
 import { useWallet } from "../providers/WalletProvider.js";
+import Confidential from "./Confidential.js";
 
-const TABS = ["Wallet", "Send", "Deposit", "Activity"] as const;
+const TABS = ["Wallet", "Deposit"] as const;
 type Tab = (typeof TABS)[number];
 
 function truncate(address: string): string {
@@ -55,6 +57,7 @@ export default function Shell() {
               <dt>Privacy bundle</dt>
               <dd>{bundle ? `created ${new Date(bundle.createdAt).toLocaleString()}` : "missing"}</dd>
             </dl>
+            <Confidential />
           </>
         ) : (
           <>

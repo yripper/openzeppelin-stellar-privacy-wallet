@@ -12,7 +12,17 @@
  * `withTransaction`/etc. here would overstate what this process needs. The
  * real `createRepo(db)` (`db/repo.ts`) satisfies this structurally with no
  * cast, since `IndexerRepo` is a superset.
+ *
+ * CORS (Task 11): the browser wallet (`@grantfox/app`) is the first consumer
+ * that calls this API directly from a different origin (`http://localhost:5173`
+ * dev, a deployed static-site origin in production) rather than
+ * server-to-server/CLI. Registered permissively (`origin: true`, reflecting
+ * the request's own `Origin`) because every route here is an unauthenticated
+ * read of public, already-on-chain-derived data (raw events, normalized CT
+ * activity, the bootnode-protocol proxy) — there is no session/cookie/secret
+ * a stricter allow-list would be protecting.
  */
+import cors from "@fastify/cors";
 import Fastify, { type FastifyInstance, type FastifyServerOptions } from "fastify";
 import type { ActivityRepoDeps } from "./modules/activity/routes.js";
 import { registerActivityRoutes } from "./modules/activity/routes.js";
@@ -31,6 +41,8 @@ export interface AppDeps {
 
 export function buildApp(deps: AppDeps): FastifyInstance {
   const app = Fastify({ logger: deps.logger ?? true });
+
+  void app.register(cors, { origin: true });
 
   registerActivityRoutes(app, deps.repo);
   registerBootnodeRoutes(app, {

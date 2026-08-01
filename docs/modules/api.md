@@ -2,7 +2,7 @@
 
 > **Living document.** Read this before modifying the module. Update it in the same change whenever the module's behavior, endpoints, files, or dependencies change.
 
-**Source:** `api/` · **Last verified:** 2026-08-01 (Task 9)
+**Source:** `api/` · **Last verified:** 2026-08-01 (Task 11)
 
 ## Purpose
 
@@ -72,6 +72,23 @@ REST and bootnode read paths; `bootnode_pages` (Task 5) is left UNUSED —
 serving live from `events` was simpler and the brief explicitly didn't
 mandate speculative caching.
 
+**Task 11 — CORS.** The browser wallet (`@grantfox/app`) is the first
+consumer that calls this API directly from a different origin (dev:
+`http://localhost:5173`; a deployed static-site origin in production) rather
+than server-to-server/CLI — every prior Task 9 live-verification curl'd from
+the same host. Without CORS, the browser silently blocks the response and
+`app/src/lib/ct-indexer.ts`'s `fetchEvents`/`resolveEventRef` and
+`app/src/components/ActivityFeed.tsx`'s activity fetch both fail with a
+generic `Failed to fetch`. Fixed by registering `@fastify/cors` (`^11.3.0`,
+new dependency) in `buildApp` (`app.ts`) with `{ origin: true }` (reflects
+the request's own `Origin`) — permissive because every route here is an
+unauthenticated read of public, already-on-chain-derived data; there is no
+session/cookie/secret a stricter allow-list would protect. Verified live: a
+`curl -H "Origin: http://localhost:5173"` against `/accounts/:address/activity`
+returns `access-control-allow-origin: http://localhost:5173`; the full
+Playwright browser e2e run (`docs/modules/app.md`'s Task 11 entry) confirms
+the wallet's own cross-origin fetches succeed end-to-end.
+
 ## ⚠️ Required migration step when deploying Task 9's worker change
 
 **Any deployment that ran the worker BEFORE this task's commit** (i.e., has
@@ -132,7 +149,7 @@ there is no old key to orphan.
 | `api/src/db/repo.ts` | `createRepo(db): IndexerRepo` — the data-access surface: batch `insertEvents` (on-conflict-do-nothing by `id`), `getCursor`/`setCursor`, `insertCtActivity`, `insertBootnodePage`/`getBootnodePage`, `withTransaction(fn)` (re-scopes all of the above to a single Postgres transaction), and (Task 9) five read-only query methods backing the API server: `listEventsFromLedger`/`listEventsAfterId` (events for a contract set, ordered by the REAL chain-position tuple `(ledger, txIndex, opIndex, eventIndex)` — NOT string `id` order, see Gotchas), `getLedgerBounds` (`{min,max}` ledger, scoped or global), `listActivityForAccount`/`listActivityForAccountBeforeId` (`ct_activity`, newest-first, keyset on `(ledger, id)`). |
 | `api/src/lib/env.ts` | `loadEnv(source?)` — zod-validated process env: `DATABASE_URL` (required), `POLL_INTERVAL_MS` (optional, default `5000`), `RPC_URL`/`BOOTNODE_URL` (optional, default to `TESTNET.rpcUrl`/`TESTNET.spp.nethermindBootnode` — must stay UNSET to take the default; an empty string fails validation, see Gotchas), `PORT` (Task 9, optional, default `3000` — the API server's listen port; the server also reuses `RPC_URL` as its upstream-proxy target, no separate var). |
 | `api/src/index.ts` | Public package entry point; re-exports the Task 5 surface (`createDb`/`createRepo`/schema/`loadEnv`). Does NOT re-export the Task 7 poller/worker or the Task 9 app/server — nothing outside `api/` consumes them as a library; `worker.ts`/`server.ts` are standalone entrypoints. |
-| `api/src/app.ts` (Task 9) | `buildApp(deps: AppDeps): FastifyInstance` — assembles both route sets (`modules/activity`, `modules/bootnode`) onto one Fastify instance; `AppDeps.repo` is typed as the read-only intersection the routes actually use (`ActivityRepoDeps & BootnodeRepoDeps`), not the full `IndexerRepo` (this server never writes). Separated from `server.ts`'s `listen()` so tests can `app.inject()` without binding a port. |
+| `api/src/app.ts` (Task 9; CORS added Task 11) | `buildApp(deps: AppDeps): FastifyInstance` — assembles both route sets (`modules/activity`, `modules/bootnode`) onto one Fastify instance; `AppDeps.repo` is typed as the read-only intersection the routes actually use (`ActivityRepoDeps & BootnodeRepoDeps`), not the full `IndexerRepo` (this server never writes). Separated from `server.ts`'s `listen()` so tests can `app.inject()` without binding a port. Registers `@fastify/cors` (`{ origin: true }`) FIRST, ahead of the route registrations, so every response carries `access-control-allow-origin` — the browser wallet's cross-origin reads (see "Task 11 — CORS" above). |
 | `api/src/app.test.ts` (Task 9) | Smoke test: both route sets are reachable on one instance (`/health` 200, `POST /rpc` dispatches to `handler.ts`) — the individual route/handler logic is covered in depth by the three test files below. |
 | `api/src/server.ts` (Task 9) | Process entrypoint: `loadEnv`, `createDb`/`createRepo`, `buildApp({repo, allowedContractIds: buildSppContractIds(), rpcUrl: env.RPC_URL})`, `app.listen({port: env.PORT, host: "0.0.0.0"})`, clean shutdown on SIGINT/SIGTERM (`app.close()` then `pool.end()`, mirroring `worker.ts`'s `main()` ordering). Same `isMainModule` ESM entrypoint guard as `worker.ts`. Run via `pnpm --filter @grantfox/api dev` (tsx) or `pnpm --filter @grantfox/api start` (built, `node dist/server.js`). |
 | `api/src/modules/activity/routes.ts` (Task 9) | `registerActivityRoutes(app, repo: ActivityRepoDeps)` — `GET /health` (`{latest_synced_ledger}` from unscoped `getLedgerBounds().max`), `GET /contracts/:contractId/events` (`{latestLedger, cursor, events:[{id,ledger,txHash,topic,value}]}`, limit default 200/max 1000, base64-of-last-id cursor, `limit+1` over-fetch to detect a further page — mirrors `@ctd/indexer`'s `events.ts`/`queries.ts` field-for-field, see the file's module doc for the one place parity does NOT extend to: `IndexerClient`'s Goldsky-JSON content decoder), `GET /accounts/:address/activity` (`{cursor, activity:[...]}`, newest-first, same cursor convention — this repo's own design, no external reference). |
@@ -223,6 +240,7 @@ there is no old key to orphan.
 - `@grantfox/shared` (`workspace:*`) — `TESTNET` config: `ct.token`/`ct.deployedAtLedger` (CT stream), `spp.pool`/`spp.poolEurc` (Task 9)/`spp.aspMembership`/`spp.publicKeyRegistry`/`spp.deploymentLedger`/`spp.nethermindBootnode` (SPP stream + bootnode allow-list, via `buildSppContractIds()`), `rpcUrl`/`spp.nethermindBootnode` as `env.ts`'s `RPC_URL`/`BOOTNODE_URL` defaults. Used by `env.ts` and `worker.ts` as of Task 7 (previously only declared). **Rebuild `packages/shared` (`pnpm --filter @grantfox/shared build`) after editing `config.ts`** — `api` imports it from `dist/`, not `src/`, so a source-only edit silently doesn't take effect until rebuilt (caught this during Task 9's own verification: `TESTNET.spp.poolEurc` read as `undefined` in `api`'s tests until the shared package was rebuilt).
 - `@stellar/stellar-sdk` (pinned `16.2.0`) — `rpc`/`xdr` types, used by `soroban-events.ts`; `xdr`/`Address`/`scValToNative`, used by `normalize-ct.ts` (Task 8) to decode topics/value XDR into native addresses/amounts and raw ciphertext bytes. NOT used by the Task 9 `getLatestLedger` proxy (`rpc-proxy.ts`) — deliberately a raw `fetch`, see that file's Gotchas entry.
 - `fastify` (`^5`) — declared per the task-5 brief for the API server; now used (Task 9): `app.ts`/`server.ts`/`modules/activity`/`modules/bootnode`.
+- `@fastify/cors` (`^11.3.0`, Task 11) — permissive CORS (`{ origin: true }`) so the browser wallet can call this API cross-origin; see "Task 11 — CORS" above.
 - `tsx` (dev, `^4.19.0`) — runs `worker.ts`/`server.ts` directly in dev (`pnpm --filter @grantfox/api worker`/`dev`) without a build step; also runs the two Task 8.5 scripts (`backfill:spp`, `backfill:spp:load`).
 - (Task 8.5) `api/src/lib/spp-archive-client.ts` calls two public third-party APIs directly via global `fetch` (no new npm dependency): `https://api.stellar.expert/explorer/testnet` (the archive) and `https://horizon-testnet.stellar.org` (txHash resolution). Only reached by running `backfill-spp.ts`; never called by `worker.ts` or any test.
 - Local Postgres: repo-root `docker-compose.yml` (`postgres:16-alpine`, user/pass/db `grantfox`, host port `${DB_HOST_PORT:-5433}`). `DATABASE_URL` default: `postgres://grantfox:grantfox@localhost:5433/grantfox` — set in repo-root `.env` and `.env.example`.
@@ -372,3 +390,5 @@ REST `IndexerClient` path is affected.
     - `POST /rpc getEvents` with an unresolvable cursor → `-32004 "cache miss; cursor not found"`.
   - DB truncated back to empty after the run (same convention as Task 8's live entry above).
   - Full transcript, deserializer-parity citations, and self-review: task-9 report (`.superpowers/sdd/2026-07-31-privacy-wallet/task-9-report.md`, gitignored).
+- **Task 11 (2026-08-01)**: `pnpm --filter @grantfox/api test` (`DATABASE_URL` set) — 173/173 pass, 0 skipped, 0 failed (unchanged count — CORS registration has no dedicated unit test, covered instead by the live curl below and the full Playwright browser e2e, both of which would fail loudly without it). `pnpm --filter @grantfox/api run build` — clean.
+  - **Live**: ran the real server (`PORT=3801`) against a local docker Postgres, live-reseeded by letting `pnpm --filter @grantfox/api exec tsx src/worker.ts` re-poll the deployed CT contract's real testnet events (RPC retention still covers them) rather than reloading the committed fixture — `curl -H "Origin: http://localhost:5173" -I .../accounts/:address/activity` → `access-control-allow-origin: http://localhost:5173` present. Then drove the real `@grantfox/app` dev server (`pnpm --filter app dev`, `VITE_API_URL=http://localhost:3801`) through Playwright end-to-end (two full wallets, register → deposit → merge → transfer → merge → withdraw, both activity feeds) — full transcript in the task-11 report (`.superpowers/sdd/2026-07-31-privacy-wallet/task-11-report.md`, gitignored). DB left populated (not truncated this time — the live-generated rows are the e2e evidence for that report).

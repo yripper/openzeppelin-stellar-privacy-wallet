@@ -8,3 +8,4 @@ docs/superpowers/
 .bb-crs/
 app/public/vendor/
 app/public/spp/
+.playwright-mcp/

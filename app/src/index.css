@@ -142,3 +142,72 @@ button[type="button"]:not(.tab) {
   font-size: 0.875rem;
   word-break: break-all;
 }
+
+.confidential {
+  margin-top: 1.5rem;
+  gap: 1.5rem;
+}
+
+.balance-card,
+.send-form,
+.activity-feed {
+  padding: 1rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+}
+
+.balance-card h2,
+.send-form h2,
+.activity-feed h2 {
+  margin-top: 0;
+  font-size: 1rem;
+}
+
+.activity-feed-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.activity-feed-header button {
+  padding: 0.25rem 0.625rem;
+  font-size: 0.8rem;
+}
+
+.activity-list {
+  list-style: none;
+  margin: 0.75rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.activity-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.875rem;
+}
+
+.activity-row:last-child {
+  border-bottom: none;
+}
+
+.activity-row-main,
+.activity-row-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+}
+
+.activity-row-meta {
+  align-items: flex-end;
+  text-align: right;
+}
+
+.activity-type {
+  font-weight: 600;
+}
