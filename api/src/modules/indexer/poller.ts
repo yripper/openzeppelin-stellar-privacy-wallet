@@ -51,6 +51,7 @@ import {
   type RawEvent,
 } from "../../lib/soroban-events.js";
 import { fetchBootnodeEvents, type FetchBootnodeEventsOptions } from "../../lib/bootnode-client.js";
+import { normalizeCtEvent } from "./normalize-ct.js";
 
 /** One page fetch's result, in the shape `pollStream` needs: rows to insert + the cursor to advance to. */
 export interface StreamFetchResult {
@@ -90,13 +91,30 @@ function toNewEventRow(e: RawEvent): NewEventRow {
  * Task 5's `repo.test.ts`). A page with zero events but a non-null
  * `nextCursor` still advances the cursor (invariant 2) — `insertEvents([])`
  * is a documented no-op, `setCursor` still runs.
+ *
+ * `ctTokenId` (Task 8): when provided, each fetched event is additionally
+ * run through `normalizeCtEvent` and any resulting `ct_activity` rows are
+ * inserted as a post-insert step INSIDE the same transaction — so a crash
+ * between the raw-event insert and the normalized-activity insert rolls
+ * back both, same as the cursor advance. Only the CT stream's call site
+ * passes this (see `worker.ts`'s `buildStreamStates`); the SPP stream
+ * leaves it `undefined` and this step is skipped entirely.
  */
-export async function pollStream(source: StreamSource, repo: IndexerRepo, streamKey: string): Promise<void> {
+export async function pollStream(
+  source: StreamSource,
+  repo: IndexerRepo,
+  streamKey: string,
+  ctTokenId?: string,
+): Promise<void> {
   const cursor = await repo.getCursor(streamKey);
   const { events, nextCursor } = await source.fetchPage(cursor);
 
   await repo.withTransaction(async (tx) => {
     await tx.insertEvents(events.map(toNewEventRow));
+    if (ctTokenId !== undefined) {
+      const activityRows = events.flatMap((e) => normalizeCtEvent(e, ctTokenId) ?? []);
+      await tx.insertCtActivity(activityRows);
+    }
     if (nextCursor !== null) {
       await tx.setCursor(streamKey, nextCursor);
     }
@@ -106,6 +124,8 @@ export async function pollStream(source: StreamSource, repo: IndexerRepo, stream
 export interface StreamConfig {
   streamKey: string;
   source: StreamSource;
+  /** Forwarded to `pollStream`'s `ctTokenId` (Task 8 normalization) — set only for the CT stream. */
+  ctTokenId?: string;
 }
 
 export interface StreamPollOutcome {
@@ -135,10 +155,10 @@ export async function pollStreams(
   shouldStop?: () => boolean,
 ): Promise<StreamPollOutcome[]> {
   const outcomes: StreamPollOutcome[] = [];
-  for (const { streamKey, source } of streams) {
+  for (const { streamKey, source, ctTokenId } of streams) {
     if (shouldStop?.()) break;
     try {
-      await pollStream(source, repo, streamKey);
+      await pollStream(source, repo, streamKey, ctTokenId);
       outcomes.push({ streamKey, ok: true });
     } catch (error) {
       outcomes.push({ streamKey, ok: false, error });

@@ -30,10 +30,12 @@
  * integration test for invariant 1 is a plus".
  */
 import { sql } from "drizzle-orm";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDb, type Db } from "../../db/client.js";
 import { createRepo, type IndexerRepo, type RepoOps } from "../../db/repo.js";
-import { events, type NewEventRow } from "../../db/schema.js";
+import { ctActivity, events, type NewCtActivityRow, type NewEventRow } from "../../db/schema.js";
 import type { EventsPage, FetchRpcEventsOptions, RawEvent } from "../../lib/soroban-events.js";
 import type { FetchBootnodeEventsOptions } from "../../lib/bootnode-client.js";
 import {
@@ -43,6 +45,29 @@ import {
   pollStreams,
   type StreamSource,
 } from "./poller.js";
+
+const CT_TOKEN_ID = "CBTEJFLW25UXIDAIWJ3KUJGI5CE2YLHM5GQM2VFU7JQZS53HE3HKGCLH";
+
+/**
+ * The same live-testnet fixtures `normalize-ct.test.ts` uses (see that
+ * file's module doc for provenance) — reused here (rather than
+ * hand-crafting XDR) to prove the wiring end-to-end against real decodable
+ * event data, not just a placeholder topic.
+ */
+function loadCtFixtures(): RawEvent[] {
+  const path = fileURLToPath(new URL("./__fixtures__/ct-events.json", import.meta.url));
+  const raw = JSON.parse(readFileSync(path, "utf8")) as Array<
+    Omit<RawEvent, "ledgerClosedAt"> & { ledgerClosedAt: string }
+  >;
+  return raw.map((e) => ({ ...e, ledgerClosedAt: new Date(e.ledgerClosedAt) }));
+}
+
+const ctFixtures = loadCtFixtures();
+function ctFixtureAt(index: number): RawEvent {
+  const event = ctFixtures[index];
+  if (event === undefined) throw new Error(`ct fixture ${index} missing`);
+  return event;
+}
 
 function makeRawEvent(overrides: Partial<RawEvent> = {}): RawEvent {
   return {
@@ -64,10 +89,11 @@ function makeRawEvent(overrides: Partial<RawEvent> = {}): RawEvent {
 interface FakeState {
   events: Map<string, NewEventRow>;
   cursors: Map<string, string>;
+  ctActivity: NewCtActivityRow[];
 }
 
 function cloneState(state: FakeState): FakeState {
-  return { events: new Map(state.events), cursors: new Map(state.cursors) };
+  return { events: new Map(state.events), cursors: new Map(state.cursors), ctActivity: [...state.ctActivity] };
 }
 
 function buildOps(state: FakeState, failOnSetCursorFor: string | undefined): RepoOps {
@@ -86,8 +112,8 @@ function buildOps(state: FakeState, failOnSetCursorFor: string | undefined): Rep
       }
       state.cursors.set(key, value);
     },
-    async insertCtActivity() {
-      throw new Error("insertCtActivity is not exercised by poller tests");
+    async insertCtActivity(rows) {
+      state.ctActivity.push(...rows);
     },
     async insertBootnodePage() {
       throw new Error("insertBootnodePage is not exercised by poller tests");
@@ -100,7 +126,7 @@ function buildOps(state: FakeState, failOnSetCursorFor: string | undefined): Rep
 
 /** In-memory `IndexerRepo` with real stage/commit/rollback transaction semantics. */
 class FakeRepo implements IndexerRepo {
-  private state: FakeState = { events: new Map(), cursors: new Map() };
+  private state: FakeState = { events: new Map(), cursors: new Map(), ctActivity: [] };
   /** When set, `setCursor` for this key throws INSIDE a transaction — simulates a crash after the insert has already been staged. */
   failOnSetCursorFor: string | undefined;
 
@@ -113,8 +139,8 @@ class FakeRepo implements IndexerRepo {
   setCursor(key: string, value: string): Promise<void> {
     return buildOps(this.state, undefined).setCursor(key, value);
   }
-  insertCtActivity(): Promise<void> {
-    throw new Error("insertCtActivity is not exercised by poller tests");
+  insertCtActivity(rows: NewCtActivityRow[]): Promise<void> {
+    return buildOps(this.state, undefined).insertCtActivity(rows);
   }
   insertBootnodePage(): Promise<void> {
     throw new Error("insertBootnodePage is not exercised by poller tests");
@@ -136,6 +162,9 @@ class FakeRepo implements IndexerRepo {
   }
   get eventCount(): number {
     return this.state.events.size;
+  }
+  get ctActivityRows(): NewCtActivityRow[] {
+    return [...this.state.ctActivity];
   }
 }
 
@@ -353,6 +382,82 @@ describe("pollStreams — invariant 5: per-stream error isolation", () => {
   });
 });
 
+describe("pollStream — CT normalization wiring (Task 8)", () => {
+  it("when ctTokenId is passed, normalizes fetched events into ct_activity rows inside the same transaction", async () => {
+    const repo = new FakeRepo();
+    // Fixture 4: a real `register` event for the deployed CT contract.
+    const registerEvent = ctFixtureAt(4);
+    const source: StreamSource = {
+      fetchPage: async () => ({ events: [registerEvent], nextCursor: "cursor-1" }),
+    };
+
+    await pollStream(source, repo, "ct:test", CT_TOKEN_ID);
+
+    expect(repo.eventCount).toBe(1);
+    expect(repo.ctActivityRows).toEqual([
+      {
+        account: "CB3I3Y5QD45DT4WHIRLTPLSEQSWKFFTGYYX5DDSDBXJALA4CP7CDB2WM",
+        type: "register",
+        counterparty: "CB3I3Y5QD45DT4WHIRLTPLSEQSWKFFTGYYX5DDSDBXJALA4CP7CDB2WM",
+        amount: null,
+        ledger: registerEvent.ledger,
+        txHash: registerEvent.txHash,
+        eventId: registerEvent.id,
+        ciphertexts: {},
+      },
+    ]);
+  });
+
+  it("a non-CT-activity event on the CT stream (e.g. a constructor setter event) inserts the raw event but no ct_activity row", async () => {
+    const repo = new FakeRepo();
+    // Fixture 0: `underlying_asset_set` — real, decodable, but not one of our five mapped types.
+    const setterEvent = ctFixtureAt(0);
+    const source: StreamSource = {
+      fetchPage: async () => ({ events: [setterEvent], nextCursor: "cursor-1" }),
+    };
+
+    await pollStream(source, repo, "ct:test", CT_TOKEN_ID);
+
+    expect(repo.eventCount).toBe(1);
+    expect(repo.ctActivityRows).toEqual([]);
+  });
+
+  it("when ctTokenId is omitted (the SPP stream), never normalizes or touches ct_activity", async () => {
+    const repo = new FakeRepo();
+    // Same real, normalizable CT register event as the first test — but this
+    // call site doesn't pass a `ctTokenId`, simulating the SPP stream's
+    // `pollStream` call. Proves the CT-only wiring is opt-in per call, not
+    // globally active.
+    const registerEvent = ctFixtureAt(4);
+    const source: StreamSource = {
+      fetchPage: async () => ({ events: [registerEvent], nextCursor: "cursor-1" }),
+    };
+
+    await pollStream(source, repo, "spp:test");
+
+    expect(repo.eventCount).toBe(1);
+    expect(repo.ctActivityRows).toEqual([]);
+  });
+
+  it("a page with multiple CT events produces ct_activity rows for all of them, still in one transaction with the cursor advance", async () => {
+    const repo = new FakeRepo();
+    repo.failOnSetCursorFor = "ct:test";
+    // Fixture 8 is a real self-deposit -> normalizes to one row.
+    const depositEvent = ctFixtureAt(8);
+    const source: StreamSource = {
+      fetchPage: async () => ({ events: [depositEvent], nextCursor: "cursor-1" }),
+    };
+
+    await expect(pollStream(source, repo, "ct:test", CT_TOKEN_ID)).rejects.toThrow(/simulated crash/);
+
+    // The cursor write failed, so the WHOLE transaction (including the
+    // events insert and the ct_activity insert) must roll back — not just
+    // the cursor.
+    expect(repo.eventCount).toBe(0);
+    expect(repo.ctActivityRows).toEqual([]);
+  });
+});
+
 describe("makeRpcSource", () => {
   it("starts from the configured startLedger, then resumes from the returned cursor", async () => {
     const fetchEvents = vi
@@ -450,5 +555,63 @@ describe.skipIf(!DATABASE_URL)("pollStream — invariant 1 (integration, real Po
     const rows = await db.select().from(events);
     expect(rows).toHaveLength(0);
     expect(await repo.getCursor("integration:crash")).toBeNull();
+  });
+});
+
+describe.skipIf(!DATABASE_URL)("pollStream — CT normalization wiring (Task 8, integration, real Postgres)", () => {
+  let db: Db;
+  let pool: { end: () => Promise<void> };
+  let repo: IndexerRepo;
+
+  beforeAll(() => {
+    ({ db, pool } = createDb(DATABASE_URL!));
+    repo = createRepo(db);
+  });
+
+  beforeEach(async () => {
+    await db.execute(sql`truncate table events, ct_activity, cursors, bootnode_pages restart identity cascade`);
+  });
+
+  afterAll(async () => {
+    await pool.end();
+  });
+
+  it("writes both the raw event and its normalized ct_activity row in a real Postgres transaction", async () => {
+    const registerEvent = ctFixtureAt(4);
+    const source: StreamSource = {
+      fetchPage: async () => ({ events: [registerEvent], nextCursor: "cursor-1" }),
+    };
+
+    await pollStream(source, repo, "ct:integration", CT_TOKEN_ID);
+
+    const eventRows = await db.select().from(events);
+    expect(eventRows).toHaveLength(1);
+    expect(eventRows[0]?.id).toBe(registerEvent.id);
+
+    const activityRows = await db.select().from(ctActivity);
+    expect(activityRows).toHaveLength(1);
+    expect(activityRows[0]).toMatchObject({
+      account: "CB3I3Y5QD45DT4WHIRLTPLSEQSWKFFTGYYX5DDSDBXJALA4CP7CDB2WM",
+      type: "register",
+      counterparty: "CB3I3Y5QD45DT4WHIRLTPLSEQSWKFFTGYYX5DDSDBXJALA4CP7CDB2WM",
+      amount: null,
+      eventId: registerEvent.id,
+    });
+  });
+
+  it("rolls back the ct_activity insert too when the transaction fails partway through", async () => {
+    const registerEvent = ctFixtureAt(4);
+    const source: StreamSource = {
+      fetchPage: async () => ({
+        events: [registerEvent, { ...registerEvent, id: "dup-bad", ledger: null as unknown as number }],
+        nextCursor: "cursor-2",
+      }),
+    };
+
+    await expect(pollStream(source, repo, "ct:integration-crash", CT_TOKEN_ID)).rejects.toThrow();
+
+    expect(await db.select().from(events)).toHaveLength(0);
+    expect(await db.select().from(ctActivity)).toHaveLength(0);
+    expect(await repo.getCursor("ct:integration-crash")).toBeNull();
   });
 });

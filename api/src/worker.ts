@@ -37,10 +37,16 @@ export interface StreamRuntimeState {
   consecutiveFailures: number;
   /** Epoch ms; the stream is skipped by `tick` until `now >= nextAttemptAt`. */
   nextAttemptAt: number;
+  /** Forwarded to `pollStream`'s CT normalization (Task 8) — set only for the CT stream (see `buildStreamStates`). */
+  ctTokenId?: string;
 }
 
-export function buildInitialStreamState(streamKey: string, source: StreamSource): StreamRuntimeState {
-  return { streamKey, source, consecutiveFailures: 0, nextAttemptAt: 0 };
+export function buildInitialStreamState(
+  streamKey: string,
+  source: StreamSource,
+  ctTokenId?: string,
+): StreamRuntimeState {
+  return { streamKey, source, consecutiveFailures: 0, nextAttemptAt: 0, ctTokenId };
 }
 
 /**
@@ -68,7 +74,7 @@ export async function tick(
   if (due.length === 0) return;
 
   const outcomes = await pollStreams(
-    due.map((s) => ({ streamKey: s.streamKey, source: s.source })),
+    due.map((s) => ({ streamKey: s.streamKey, source: s.source, ctTokenId: s.ctTokenId })),
     repo,
     shouldStop,
   );
@@ -107,7 +113,12 @@ function buildStreamStates(env: { RPC_URL: string; BOOTNODE_URL: string }): Stre
     startLedger: TESTNET.spp.deploymentLedger,
   });
 
-  return [buildInitialStreamState(ctStreamKey, ctSource), buildInitialStreamState(sppStreamKey, sppSource)];
+  return [
+    // CT stream only (Task 8): `ctTokenId` turns on the post-insert
+    // `ct_activity` normalization step inside `pollStream`'s transaction.
+    buildInitialStreamState(ctStreamKey, ctSource, TESTNET.ct.token),
+    buildInitialStreamState(sppStreamKey, sppSource),
+  ];
 }
 
 /** Resolves once SIGINT or SIGTERM is received, with which one. */

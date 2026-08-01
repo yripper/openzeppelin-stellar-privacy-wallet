@@ -7,8 +7,12 @@
  * `pool.end()`) is intentionally NOT unit-tested here — it's exercised by
  * the bounded live-verification run instead (see task-7-report.md).
  */
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import type { IndexerRepo, RepoOps } from "./db/repo.js";
+import type { NewCtActivityRow } from "./db/schema.js";
+import type { RawEvent } from "./lib/soroban-events.js";
 import type { StreamSource } from "./modules/indexer/poller.js";
 import { backoffDelayMs, buildInitialStreamState, tick, type StreamRuntimeState } from "./worker.js";
 
@@ -16,6 +20,7 @@ import { backoffDelayMs, buildInitialStreamState, tick, type StreamRuntimeState 
 class FakeRepo implements IndexerRepo {
   private cursors = new Map<string, string>();
   private eventCounter = 0;
+  private ctActivity: NewCtActivityRow[] = [];
 
   async insertEvents(rows: unknown[]): Promise<void> {
     this.eventCounter += rows.length;
@@ -26,7 +31,9 @@ class FakeRepo implements IndexerRepo {
   async setCursor(key: string, value: string): Promise<void> {
     this.cursors.set(key, value);
   }
-  async insertCtActivity(): Promise<void> {}
+  async insertCtActivity(rows: NewCtActivityRow[]): Promise<void> {
+    this.ctActivity.push(...rows);
+  }
   async insertBootnodePage(): Promise<void> {}
   async getBootnodePage(): Promise<null> {
     return null;
@@ -37,6 +44,22 @@ class FakeRepo implements IndexerRepo {
   get eventCount(): number {
     return this.eventCounter;
   }
+  get ctActivityRows(): NewCtActivityRow[] {
+    return [...this.ctActivity];
+  }
+}
+
+const CT_TOKEN_ID = "CBTEJFLW25UXIDAIWJ3KUJGI5CE2YLHM5GQM2VFU7JQZS53HE3HKGCLH";
+
+/** Same live-testnet fixture `normalize-ct.test.ts`/`poller.test.ts` use — see `normalize-ct.test.ts`'s module doc for provenance. */
+function loadCtRegisterFixture(): RawEvent {
+  const path = fileURLToPath(new URL("./modules/indexer/__fixtures__/ct-events.json", import.meta.url));
+  const raw = JSON.parse(readFileSync(path, "utf8")) as Array<
+    Omit<RawEvent, "ledgerClosedAt"> & { ledgerClosedAt: string }
+  >;
+  const registerFixture = raw[4]; // a real `register` event
+  if (registerFixture === undefined) throw new Error("ct fixture 4 missing");
+  return { ...registerFixture, ledgerClosedAt: new Date(registerFixture.ledgerClosedAt) };
 }
 
 describe("backoffDelayMs", () => {
@@ -147,5 +170,38 @@ describe("tick", () => {
     // Untouched backoff state — a stream skipped by a shutdown signal isn't a failure.
     expect(states[0]!.consecutiveFailures).toBe(0);
     expect(states[1]!.consecutiveFailures).toBe(0);
+  });
+
+  it("forwards a stream's ctTokenId through to pollStream's CT normalization (Task 8 wiring)", async () => {
+    const repo = new FakeRepo();
+    const registerEvent = loadCtRegisterFixture();
+    const ctSource: StreamSource = {
+      fetchPage: async () => ({ events: [registerEvent], nextCursor: "ct-cursor" }),
+    };
+    const sppSource: StreamSource = {
+      // Same real, normalizable event — but the SPP stream's state carries no
+      // ctTokenId, so it must never be normalized regardless of its content.
+      fetchPage: async () => ({ events: [registerEvent], nextCursor: "spp-cursor" }),
+    };
+    const states: StreamRuntimeState[] = [
+      buildInitialStreamState("ct:test", ctSource, CT_TOKEN_ID),
+      buildInitialStreamState("spp:test", sppSource),
+    ];
+
+    await tick(states, repo, 0);
+
+    expect(repo.eventCount).toBe(2);
+    expect(repo.ctActivityRows).toEqual([
+      {
+        account: "CB3I3Y5QD45DT4WHIRLTPLSEQSWKFFTGYYX5DDSDBXJALA4CP7CDB2WM",
+        type: "register",
+        counterparty: "CB3I3Y5QD45DT4WHIRLTPLSEQSWKFFTGYYX5DDSDBXJALA4CP7CDB2WM",
+        amount: null,
+        ledger: registerEvent.ledger,
+        txHash: registerEvent.txHash,
+        eventId: registerEvent.id,
+        ciphertexts: {},
+      },
+    ]);
   });
 });
