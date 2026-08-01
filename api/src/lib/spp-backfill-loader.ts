@@ -7,33 +7,32 @@
  * on its first poll after this backfill lands.
  *
  * `SPP_STREAM_KEY` MUST exactly match the stream key `api/src/worker.ts`'s
- * (unexported) `buildStreamStates()` computes: `` `spp:${sppContractIds.join(",")}` ``
- * where `sppContractIds = [TESTNET.spp.pool, TESTNET.spp.publicKeyRegistry]`
- * (worker.ts:107-108, read directly rather than guessed — see the task-8.5
- * brief's "read api/src/worker.ts for the exact spp: stream key string
- * used"). It is replicated here, NOT imported, because `buildStreamStates`
- * isn't exported. If worker.ts's SPP `contractIds` list ever changes, this
- * constant must change with it, or `initSppCursor` silently targets the
- * wrong cursor row and the worker falls right back to the dead bootnode on
- * its next poll — this is the single biggest correctness risk in this file,
- * flagged in the task-8.5 report.
+ * `buildStreamStates()` computes for the SPP stream. Task 8.5 replicated
+ * that computation by hand here (`` `spp:${[TESTNET.spp.pool, TESTNET.spp.publicKeyRegistry].join(",")}` ``)
+ * because `buildStreamStates` wasn't exported, and flagged the drift risk:
+ * "if worker.ts's SPP contractIds list ever changes... SPP_STREAM_KEY must
+ * be updated in lockstep." Task 9 does exactly that (2 -> 4 contracts, see
+ * `worker.ts`'s `buildSppContractIds` doc comment) and closes the risk at
+ * the root: `SPP_STREAM_KEY` now IMPORTS `buildSppStreamKey()` from
+ * `worker.ts` instead of re-deriving it, so the two files can never drift
+ * again. (`worker.ts` is safe to import here — its `main()` auto-run is
+ * guarded by an `import.meta.url === pathToFileURL(process.argv[1]).href`
+ * check, so importing it from a script whose entrypoint is NOT `worker.ts`
+ * never triggers the worker process loop.)
  *
  * Note: the backfill itself (`backfill-spp.ts`) fetches all FOUR SPP
  * contracts (the SDK's full `all_contract_ids()` sync set — 2 pools +
- * asp_membership + public_key_registry, per the brief), but the worker's
- * live SPP stream (Task 7, unchanged by this task) currently only tracks
- * TWO of them (`pool` + `publicKeyRegistry`) going forward via RPC. The
- * other two contracts' backfilled history still lands in `events` (for
- * Task 9's future bootnode to serve the SDK's full sync set from), it just
- * isn't polled live yet — a gap for a future task, not this one, to close.
+ * asp_membership + public_key_registry, per the brief); as of Task 9 the
+ * worker's live SPP stream now tracks all four too (previously only 2 of 4
+ * were polled live — see `worker.ts`'s `buildSppContractIds` doc comment).
  */
-import { TESTNET } from "@grantfox/shared";
 import type { RepoOps } from "../db/repo.js";
 import type { NewEventRow } from "../db/schema.js";
 import { encodeRpcModeLedgerCursor, isRpcModeCursor } from "../modules/indexer/poller.js";
+import { buildSppStreamKey } from "../worker.js";
 
-/** See module doc — replicated from `api/src/worker.ts`'s `buildStreamStates()`, not imported (not exported there). */
-export const SPP_STREAM_KEY = `spp:${[TESTNET.spp.pool, TESTNET.spp.publicKeyRegistry].join(",")}`;
+/** Imported from `worker.ts` (Task 9) — see module doc. */
+export const SPP_STREAM_KEY = buildSppStreamKey();
 
 type CursorRepo = Pick<RepoOps, "getCursor" | "setCursor">;
 type EventsRepo = Pick<RepoOps, "insertEvents">;

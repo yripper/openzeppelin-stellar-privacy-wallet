@@ -14,7 +14,14 @@ import type { IndexerRepo, RepoOps } from "./db/repo.js";
 import type { NewCtActivityRow } from "./db/schema.js";
 import type { RawEvent } from "./lib/soroban-events.js";
 import type { StreamSource } from "./modules/indexer/poller.js";
-import { backoffDelayMs, buildInitialStreamState, tick, type StreamRuntimeState } from "./worker.js";
+import {
+  backoffDelayMs,
+  buildInitialStreamState,
+  buildSppContractIds,
+  buildSppStreamKey,
+  tick,
+  type StreamRuntimeState,
+} from "./worker.js";
 
 /** Minimal in-memory `IndexerRepo` — enough for `tick`/`pollStreams` to run against; no rollback semantics needed here (that's covered in `poller.test.ts`). */
 class FakeRepo implements IndexerRepo {
@@ -61,6 +68,22 @@ function loadCtRegisterFixture(): RawEvent {
   if (registerFixture === undefined) throw new Error("ct fixture 4 missing");
   return { ...registerFixture, ledgerClosedAt: new Date(registerFixture.ledgerClosedAt) };
 }
+
+describe("buildSppContractIds / buildSppStreamKey", () => {
+  it("returns the SDK's full 4-contract sync set: pool, poolEurc, aspMembership, publicKeyRegistry", () => {
+    expect(buildSppContractIds()).toEqual([
+      "CAWCZ6EO4PM5EZOH5K7XSW3R46DGLOT3XSEH36OA5EOZUSJ5XS7BX6XI",
+      "CAJJT5YV4BMFTHEOO5FGO2G56TEJKM4G4FW7FS4DYBLLLLHSAYUZWT74",
+      "CDEFDJPNVWDWUUHGHGGZ56FEPSSJHQLGRKS6OWIRKGRYRWSBNMLW7J5K",
+      "CDK75EQA2G4EDN34CWY7ALJ4EIQMNVBOFMHAVIF3BBY7IUDNHKHNDA36",
+    ]);
+  });
+
+  it("buildSppStreamKey defaults to buildSppContractIds(), joined with a spp: prefix", () => {
+    expect(buildSppStreamKey()).toBe(`spp:${buildSppContractIds().join(",")}`);
+    expect(buildSppStreamKey(["A", "B"])).toBe("spp:A,B");
+  });
+});
 
 describe("backoffDelayMs", () => {
   it.each([

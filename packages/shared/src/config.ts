@@ -11,6 +11,12 @@ export const TESTNET = {
   },
   spp: {
     pool: "CAWCZ6EO4PM5EZOH5K7XSW3R46DGLOT3XSEH36OA5EOZUSJ5XS7BX6XI",
+    // EURC pool (the SDK's `all_contract_ids()` sync set's 2nd enabled pool) —
+    // source: resources/stellar-private-payments/deployments/testnet/deployments.json
+    // `pools[1].poolContractId`, cross-verified against the task-8.5 backfill
+    // script's own hardcoded `POOL_EURC_CONTRACT_ID` (api/scripts/backfill-spp.ts),
+    // now the single source of truth for it (Task 9).
+    poolEurc: "CAJJT5YV4BMFTHEOO5FGO2G56TEJKM4G4FW7FS4DYBLLLLHSAYUZWT74",
     publicKeyRegistry: "CDK75EQA2G4EDN34CWY7ALJ4EIQMNVBOFMHAVIF3BBY7IUDNHKHNDA36",
     aspMembership: "CDEFDJPNVWDWUUHGHGGZ56FEPSSJHQLGRKS6OWIRKGRYRWSBNMLW7J5K",
     aspNonMembership: "CBEPJBHP6X4K7KWLRPFUGPRS3OM6HWXTWIVN3M2LCGZZHCCTHHSYAAF3",

@@ -3,14 +3,29 @@ import { describe, expect, it } from "vitest";
 import { loadEnv } from "./env.js";
 
 describe("loadEnv", () => {
-  it("parses a minimal valid env, defaulting POLL_INTERVAL_MS/RPC_URL/BOOTNODE_URL", () => {
+  it("parses a minimal valid env, defaulting POLL_INTERVAL_MS/RPC_URL/BOOTNODE_URL/PORT", () => {
     const env = loadEnv({ DATABASE_URL: "postgres://user:pass@localhost:5433/db" });
     expect(env).toEqual({
       DATABASE_URL: "postgres://user:pass@localhost:5433/db",
       POLL_INTERVAL_MS: 5000,
       RPC_URL: TESTNET.rpcUrl,
       BOOTNODE_URL: TESTNET.spp.nethermindBootnode,
+      PORT: 3000,
     });
+  });
+
+  it("coerces a supplied PORT from a string", () => {
+    const env = loadEnv({ DATABASE_URL: "postgres://user:pass@localhost:5433/db", PORT: "8080" });
+    expect(env.PORT).toBe(8080);
+  });
+
+  it("throws when PORT is not a positive integer", () => {
+    expect(() =>
+      loadEnv({ DATABASE_URL: "postgres://user:pass@localhost:5433/db", PORT: "0" }),
+    ).toThrow();
+    expect(() =>
+      loadEnv({ DATABASE_URL: "postgres://user:pass@localhost:5433/db", PORT: "not-a-port" }),
+    ).toThrow();
   });
 
   it("uses supplied RPC_URL/BOOTNODE_URL overrides instead of the TESTNET defaults", () => {

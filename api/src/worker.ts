@@ -96,6 +96,29 @@ export async function tick(
   }
 }
 
+/**
+ * The 4-contract SPP set the worker's SPP stream follows AND the bootnode-
+ * protocol endpoint (Task 9, `api/src/modules/bootnode/handler.ts`)
+ * allow-lists — the SDK's full sync set, `all_contract_ids()` = enabled
+ * pools + asp_membership + public_key_registry
+ * (`resources/stellar-private-payments/sdk/types/src/lib.rs:323-329`,
+ * cross-checked against the deployment manifest). Exported so
+ * `spp-backfill-loader.ts` and the bootnode handler share ONE source of
+ * truth instead of replicating the array by hand — the previous (Task 7/8.5)
+ * 2-contract version of this array was hand-copied into
+ * `spp-backfill-loader.ts` as `SPP_STREAM_KEY`, flagged there as a drift
+ * risk if this array ever changed. It just did (Task 9: 2 -> 4 contracts),
+ * so this task closes that gap by exporting rather than re-copying.
+ */
+export function buildSppContractIds(): string[] {
+  return [TESTNET.spp.pool, TESTNET.spp.poolEurc, TESTNET.spp.aspMembership, TESTNET.spp.publicKeyRegistry];
+}
+
+/** `spp:<contractIds joined by ",">` — the stream key `buildStreamStates` uses for the SPP stream's `cursors` row. Exported (Task 9) for the same reason as `buildSppContractIds`. */
+export function buildSppStreamKey(contractIds: string[] = buildSppContractIds()): string {
+  return `spp:${contractIds.join(",")}`;
+}
+
 function buildStreamStates(env: { RPC_URL: string; BOOTNODE_URL: string }): StreamRuntimeState[] {
   const ctStreamKey = `ct:${TESTNET.ct.token}`;
   const ctSource = makeRpcSource({
@@ -104,8 +127,8 @@ function buildStreamStates(env: { RPC_URL: string; BOOTNODE_URL: string }): Stre
     startLedger: TESTNET.ct.deployedAtLedger,
   });
 
-  const sppContractIds = [TESTNET.spp.pool, TESTNET.spp.publicKeyRegistry];
-  const sppStreamKey = `spp:${sppContractIds.join(",")}`;
+  const sppContractIds = buildSppContractIds();
+  const sppStreamKey = buildSppStreamKey(sppContractIds);
   const sppSource = makeBootnodeThenRpcSource({
     bootnodeUrl: env.BOOTNODE_URL,
     rpcUrl: env.RPC_URL,

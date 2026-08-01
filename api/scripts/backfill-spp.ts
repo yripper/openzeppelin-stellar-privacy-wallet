@@ -38,13 +38,16 @@ const POLITE_DELAY_MS = 300;
  * cross-checked against the vendored deployment manifest
  * (`resources/stellar-private-payments/deployments/testnet/deployments.json`,
  * both pools `"enabled": true`) — exactly the 4 contracts the task-8.5 brief
- * lists. THREE of these already live in `packages/shared/src/config.ts`
- * (`TESTNET.spp.pool` / `.aspMembership` / `.publicKeyRegistry`); the EURC
- * pool does NOT (`config.ts` has `aspNonMembership` instead, which is NOT
- * part of the SDK's sync set and is untouched by this backfill) — flagged
- * as a `config.ts` gap in the task-8.5 report rather than silently "fixed"
- * here as an out-of-scope side effect. Hardcoded from the brief's
- * live-verified address, cross-confirmed against the deployment manifest.
+ * lists. At the time this script was written, only THREE of these lived in
+ * `packages/shared/src/config.ts` (`TESTNET.spp.pool` / `.aspMembership` /
+ * `.publicKeyRegistry`) — the EURC pool was flagged as a `config.ts` gap in
+ * the task-8.5 report rather than silently "fixed" here as an out-of-scope
+ * side effect. Task 9 closed that gap (`TESTNET.spp.poolEurc`, now consumed
+ * by `worker.ts`'s live SPP stream and the bootnode handler's allow-list)
+ * but deliberately left this script's own hardcode as-is (per the task-9
+ * brief: "Task 8.5's script may keep its hardcode") — this is a one-shot
+ * archival-recovery script, not a live code path, so there is no drift risk
+ * worth the touch. The value below is identical to `TESTNET.spp.poolEurc`.
  */
 const POOL_EURC_CONTRACT_ID = "CAJJT5YV4BMFTHEOO5FGO2G56TEJKM4G4FW7FS4DYBLLLLHSAYUZWT74";
 

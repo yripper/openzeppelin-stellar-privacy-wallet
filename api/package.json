@@ -11,6 +11,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "vitest run --no-file-parallelism",
+    "dev": "tsx src/server.ts",
+    "start": "node dist/server.js",
     "worker": "tsx src/worker.ts",
     "backfill:spp": "tsx scripts/backfill-spp.ts",
     "backfill:spp:load": "tsx scripts/load-backfill.ts",
