@@ -51,7 +51,7 @@ import {
   type RawEvent,
 } from "../../lib/soroban-events.js";
 import { fetchBootnodeEvents, type FetchBootnodeEventsOptions } from "../../lib/bootnode-client.js";
-import { normalizeCtEvent } from "./normalize-ct.js";
+import { normalizeCtEvent, type CtActivityInsert } from "./normalize-ct.js";
 
 /** One page fetch's result, in the shape `pollStream` needs: rows to insert + the cursor to advance to. */
 export interface StreamFetchResult {
@@ -99,6 +99,21 @@ function toNewEventRow(e: RawEvent): NewEventRow {
  * back both, same as the cursor advance. Only the CT stream's call site
  * passes this (see `worker.ts`'s `buildStreamStates`); the SPP stream
  * leaves it `undefined` and this step is skipped entirely.
+ *
+ * **Per-event error isolation (review fix):** `normalizeCtEvent` is
+ * deliberately fail-fast (throws on a malformed/missing value field —
+ * see its module doc) rather than swallowing decode errors itself, so
+ * `pollStream` is what decides the failure policy. One malformed event
+ * must NOT poison the whole page: `normalizeCtEvent` is called inside a
+ * per-event try/catch, a thrown error is logged (with the event id) and
+ * that ONE event contributes no `ct_activity` rows, but its raw `events`
+ * row still inserts and every other event in the page still normalizes
+ * and the cursor still advances normally. Without this, a single
+ * malformed event (the foreseeable trigger: a redeployed CT contract
+ * whose event field names have drifted from what this normalizer
+ * expects — see `normalize-ct.ts`'s module doc) would roll back the
+ * ENTIRE transaction every retry, permanently stalling the stream on
+ * that page forever (the cursor would never advance past it).
  */
 export async function pollStream(
   source: StreamSource,
@@ -112,7 +127,18 @@ export async function pollStream(
   await repo.withTransaction(async (tx) => {
     await tx.insertEvents(events.map(toNewEventRow));
     if (ctTokenId !== undefined) {
-      const activityRows = events.flatMap((e) => normalizeCtEvent(e, ctTokenId) ?? []);
+      const activityRows: CtActivityInsert[] = [];
+      for (const e of events) {
+        try {
+          const rows = normalizeCtEvent(e, ctTokenId);
+          if (rows !== null) activityRows.push(...rows);
+        } catch (error) {
+          console.error(
+            `[poller] normalizeCtEvent failed for event "${e.id}" on stream "${streamKey}" — skipping its ct_activity rows; the raw event and the rest of the page are unaffected`,
+            error,
+          );
+        }
+      }
       await tx.insertCtActivity(activityRows);
     }
     if (nextCursor !== null) {

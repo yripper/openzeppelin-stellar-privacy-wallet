@@ -221,6 +221,53 @@ describe("normalizeCtEvent — transfer", () => {
       },
     ]);
   });
+
+  it("maps a self-transfer (from === to) to a single row, sharing the same ciphertext set (synthesized — no real self-transfer in the fixtures yet)", () => {
+    const fromTopic = fixtureAt(10).topic[1]!;
+    const event: RawEvent = {
+      ...fixtureAt(10),
+      // Both address topics point at the SAME real registered account
+      // (fixture 10's `from`) — round-trip-verified real XDR, not
+      // hand-encoded, just reused for the `to` slot too.
+      topic: [fixtureAt(10).topic[0]!, fromTopic, fromTopic],
+    };
+    const rows = normalizeCtEvent(event, TOKEN_ID);
+    expect(rows).toEqual([
+      {
+        account: "CBL2LDYSE42ZJKSPSGTWXCR4DWET7AFENAPDICYEYRQB54WWN4SSK7II",
+        type: "transfer",
+        counterparty: "CBL2LDYSE42ZJKSPSGTWXCR4DWET7AFENAPDICYEYRQB54WWN4SSK7II",
+        amount: null,
+        ledger: 3900648,
+        txHash: "83f685f5b597fa1bb2f6648a2017d7e81625097fb0f3a81d9654992850079a85",
+        eventId: event.id,
+        ciphertexts: {
+          rE: "0x176947b28fe198b1adfebff7122ebeac475eef7f5458fbdb8b2d00ce282dfbe126170544742b1e49d25ea497af4fd8007c9c65f7a751192223b0bcead2d1ae6c",
+          vTilde: "0x22495f4e7d4bdd1cdedf941ebe5cfb041598d7519119f237c1c3d38749a658d2",
+          sigma: "0x00bc8be5cde151ec408331ec685e821c6b4f42496067c5d8151f8be1f54d54c3",
+          bTilde: "0x142426bd5f5dd5c0ff3c6ecc46be9a81241448b27939ac9c3c1e3956750aac17",
+          vAudR: "0x2c69601b63479ade2bfd319d58971fb54b28cdb1928e0b12ef09ba0c26f9375d",
+          rAudR: "0x02674cdf407f13a26190304608f6d8b73a0e9181e825e4970d669ea1f2f9908d",
+          vAudS: "0x2e1bae274a248e25f2c5f6d26f7200c4400a3c2154d027e1367ea8b72a409131",
+          bAudS: "0x10781d982c6489c7d7a0386216b56af6f40eb20fb2b2cd4fc652f60b5e8b08e3",
+        },
+      },
+    ]);
+  });
+});
+
+describe("normalizeCtEvent — fail-fast on malformed input (error isolation is poller.ts's job, not this function's)", () => {
+  it("throws when a valid mapped topic's event data is missing a required value field", () => {
+    // Real `withdraw` topics (valid, mapped symbol) paired with a real
+    // `register` event's `valueXdr` (data map only has `auditor_id`, no
+    // `amount`/`r_e`/... ) — simulates the foreseeable trigger this
+    // review finding calls out: a contract whose event value shape has
+    // drifted from what this normalizer expects. `normalizeCtEvent` must
+    // throw here, not return `null` or a partial row — `poller.ts` is
+    // responsible for catching this and isolating it per event.
+    const event: RawEvent = { ...fixtureAt(11), valueXdr: fixtureAt(4).valueXdr };
+    expect(() => normalizeCtEvent(event, TOKEN_ID)).toThrow(/missing field "amount"/);
+  });
 });
 
 describe("normalizeCtEvent — withdraw", () => {

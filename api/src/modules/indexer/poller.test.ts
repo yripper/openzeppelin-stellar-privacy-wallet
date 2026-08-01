@@ -456,6 +456,52 @@ describe("pollStream — CT normalization wiring (Task 8)", () => {
     expect(repo.eventCount).toBe(0);
     expect(repo.ctActivityRows).toEqual([]);
   });
+
+  it("a poisoned CT event (throws during normalization) doesn't block the rest of the page — review fix", async () => {
+    // Real `withdraw` topics (a valid, mapped symbol) paired with a real
+    // `register` event's `valueXdr` (missing the `amount`/`r_e`/... fields
+    // `normalizeCtEvent` requires for `withdraw`) — reproduces the
+    // reviewer's scenario: one malformed event on the page. Without the
+    // per-event try/catch, this used to throw out of `pollStream`
+    // entirely, rolling back the WHOLE page's raw-event insert and never
+    // advancing the cursor — a permanent stall, since the next poll would
+    // refetch the identical poisoned page and fail the same way forever.
+    const poisonedEvent: RawEvent = {
+      ...ctFixtureAt(11),
+      id: "poisoned-withdraw-1",
+      valueXdr: ctFixtureAt(4).valueXdr,
+    };
+    const goodEvent = ctFixtureAt(4); // real register event — normalizes fine.
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const repo = new FakeRepo();
+    const source: StreamSource = {
+      fetchPage: async () => ({ events: [poisonedEvent, goodEvent], nextCursor: "cursor-past-poisoned" }),
+    };
+
+    await pollStream(source, repo, "ct:test", CT_TOKEN_ID);
+
+    // Both raw events inserted — the poisoned one included, unaffected.
+    expect(repo.eventCount).toBe(2);
+    // Only the good event produced a ct_activity row.
+    expect(repo.ctActivityRows).toEqual([
+      {
+        account: "CB3I3Y5QD45DT4WHIRLTPLSEQSWKFFTGYYX5DDSDBXJALA4CP7CDB2WM",
+        type: "register",
+        counterparty: "CB3I3Y5QD45DT4WHIRLTPLSEQSWKFFTGYYX5DDSDBXJALA4CP7CDB2WM",
+        amount: null,
+        ledger: goodEvent.ledger,
+        txHash: goodEvent.txHash,
+        eventId: goodEvent.id,
+        ciphertexts: {},
+      },
+    ]);
+    // The cursor still advances — the page as a whole is NOT retried.
+    expect(await repo.getCursor("ct:test")).toBe("cursor-past-poisoned");
+    // The failure was logged with the offending event's id, not swallowed silently.
+    expect(consoleError).toHaveBeenCalledWith(expect.stringContaining("poisoned-withdraw-1"), expect.any(Error));
+
+    consoleError.mockRestore();
+  });
 });
 
 describe("makeRpcSource", () => {

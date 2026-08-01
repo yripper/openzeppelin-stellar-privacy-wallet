@@ -43,10 +43,26 @@
  *   of it is already public on-chain event data, so sharing the identical
  *   object with both rows costs nothing and guarantees each side's wallet
  *   has every field it might need to decrypt its side of the transfer.
+ *   Same `from === to` collapse to a single row as `deposit` above, same
+ *   double-counting rationale (not observed in the live fixtures — no
+ *   self-transfer has happened on-chain yet — but the contract does not
+ *   forbid it, so this is tested against a synthesized event).
  * - any other topic (a different contract's event, or a CT-emitted-but-
  *   unmapped event such as `spender_transfer`/`set_spender`/
  *   `revoke_spender`/the compliance events/the constructor setter events)
  *   -> `null`.
+ *
+ * Error handling: this function is deliberately FAIL-FAST, not
+ * defensive — a malformed/missing value field (`requireField`) or a
+ * malformed topic (`Address.fromScVal`, `xdr.ScVal.fromXDR`) throws
+ * rather than silently dropping the event. Per-event error ISOLATION
+ * (catching that throw so one bad event doesn't poison a whole page's
+ * transaction) is deliberately NOT this function's job — it stays pure
+ * and throw-on-bad-input; `poller.ts`'s `pollStream` wraps each call in
+ * a try/catch and decides the failure policy (log + skip that event's
+ * activity rows, continue the page). See `poller.ts`'s module doc for
+ * why (review fix — a redeployed contract with drifted event field
+ * names, exactly the scenario flagged below, is the foreseeable trigger).
  *
  * Ciphertext fields are hex-encoded RAW ON-CHAIN BYTES (`0x`-prefixed,
  * lowercase) — the exact `BytesN<32>`/`BytesN<64>` wire layout, not
