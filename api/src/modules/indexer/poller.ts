@@ -215,6 +215,25 @@ function decodeResumeToken(raw: string): ResumeToken {
   return { kind: "cursor", value: raw };
 }
 
+/**
+ * Build an RPC-mode cursor value bootstrapped directly at `ledger`, with no
+ * underlying RPC resume token yet — i.e. the value `makeBootnodeThenRpcSource`
+ * would itself write after a real handoff, but constructed up front (Task 8.5:
+ * the SPP backfill loader writes this so the worker's SPP stream starts in
+ * RPC mode from ledger `lastBackfilledLedger + 1` and NEVER calls the dead
+ * bootnode). Exported so callers outside this module never have to duplicate
+ * the `rpc:`/`ledger:` prefix literals ("do not invent a parallel format" —
+ * see the task-8.5 brief).
+ */
+export function encodeRpcModeLedgerCursor(ledger: number): string {
+  return RPC_PREFIX + encodeResumeToken({ kind: "ledger", value: ledger });
+}
+
+/** `true` if `cursor` is already in RPC mode (the `rpc:` prefix) — i.e. the stream has already handed off, for real or via `encodeRpcModeLedgerCursor`, and must not be re-initialized. */
+export function isRpcModeCursor(cursor: string): boolean {
+  return cursor.startsWith(RPC_PREFIX);
+}
+
 /** `EventsPage.cursor` is `null` when the source reports "no further cursor" (caught up) — fall back to resuming by ledger number rather than persisting a dead-end `null`. */
 function nextResumeTokenFromPage(page: EventsPage): ResumeToken {
   return page.cursor !== null ? { kind: "cursor", value: page.cursor } : { kind: "ledger", value: page.latestLedger + 1 };
