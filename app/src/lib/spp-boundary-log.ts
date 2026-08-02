@@ -29,6 +29,12 @@
  *    per-note "origin type" field distinguishing a shield-in note from a
  *    received-private-transfer note — both are just a spendable commitment,
  *    by design (`sdk/types/src/lib.rs`'s `UserNoteSummary`).
+ *  - The ONE wasm-exposed method that looks like a history feed,
+ *    `Client.operationalFeed(limit)`, was checked too and ruled out: it
+ *    returns POOL-WIDE aggregate commitment/nullifier counts per ledger, not
+ *    per-user data — no address, no amount, no direction
+ *    (`get_operational_feed`'s SQL, `sdk/state/src/storage.rs:658`, grouped
+ *    by `(ledger, pool_contract_id)` across ALL users of the pool).
  *  - The SDK DOES define a per-user operation-history table shaped exactly
  *    for this (`sdk/types/src/lib.rs`'s `UserOperation` — op_type / amount /
  *    direction / counterparty / tx_hash / created_at — written via

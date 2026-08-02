@@ -25,12 +25,23 @@
  * numeric code still gets `humanizeContractError`'s generic "error #N"
  * fallback rather than a raw multi-line HostError diagnostic dump.
  *
- * Deliberately kept out of `spp.ts`/`Shielded.tsx`/`WalletProvider.tsx`:
- * importing `@ctd/sdk` (even just for this one function) pulls in its whole
- * barrel, including the bb.js/UltraHonk proving graph
- * (`docs/modules/app.md`'s Task 11 vite gotchas) — those call sites use
- * `./relayer-errors.js` directly instead, since they never touch the CT
- * contract.
+ * Deliberately not imported from `spp.ts`/`Shielded.tsx`/`WalletProvider.tsx`
+ * — those call sites use `./relayer-errors.js` directly instead. **This is
+ * import-hygiene, not a bundle-size optimization**: the app has no route/tab
+ * code-splitting (`App.tsx` and `Shell.tsx` both statically import every
+ * page/tab, no `lazy()` anywhere), so `@ctd/sdk`'s JS module graph has been
+ * unconditionally reachable from the single entry chunk since Task 11
+ * regardless of whether this file is imported — verified against a real
+ * `vite build`: `dist/assets/index-*.js` is one chunk containing every
+ * route. The real reason non-CT call sites use `relayer-errors.js` instead
+ * is that importing a CT-specific module from SPP/wallet-lifecycle code
+ * would be a backwards dependency (those rails have no reason to know CT
+ * contract codes exist), not that it changes what ships. bb.js's actual
+ * 3.4MB WASM stays out of the JS bundle via an unrelated mechanism —
+ * `bb-loader.ts`'s `ensureBrowserBackend()` loads it through a RUNTIME
+ * dynamic `import(/* @vite-ignore *\/ "/vendor/bb/index.js")` against a
+ * vendored `/public` asset, which Vite never bundles regardless of which
+ * app code imports from `@ctd/sdk`.
  */
 import { humanizeContractError } from "@ctd/sdk";
 
