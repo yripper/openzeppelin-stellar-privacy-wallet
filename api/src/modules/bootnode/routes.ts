@@ -65,11 +65,11 @@ export function registerBootnodeRoutes(app: FastifyInstance, deps: BootnodeHandl
           return sendError({ code: METHOD_NOT_FOUND_CODE, message: `method not found: ${body.method}` });
       }
     } catch (error) {
+      // Log the real error (DB/pg/undici internals, stack included) server-side
+      // only — this is a publicly-advertised endpoint, so the wire response
+      // never echoes `error.message` back to the caller (review fix).
       request.log.error({ err: error }, "[bootnode] unexpected error handling JSON-RPC request");
-      return sendError({
-        code: INTERNAL_ERROR_CODE,
-        message: error instanceof Error ? error.message : "internal error",
-      });
+      return sendError({ code: INTERNAL_ERROR_CODE, message: "internal error" });
     }
   });
 }

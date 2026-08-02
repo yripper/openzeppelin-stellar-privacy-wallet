@@ -152,7 +152,7 @@ describe("POST /rpc", () => {
     expect(res.json().error).toEqual({ code: -32600, message: "Invalid Request" });
   });
 
-  it("an unexpected thrown error (e.g. DB unreachable) maps to -32603, not a raw 500", async () => {
+  it("an unexpected thrown error (e.g. DB unreachable) maps to -32603, not a raw 500, and does NOT echo the internal error message", async () => {
     const deps = makeDeps({
       fetchLatestLedger: vi.fn().mockRejectedValue(new Error("ECONNREFUSED")),
     });
@@ -165,7 +165,10 @@ describe("POST /rpc", () => {
     });
 
     expect(res.statusCode).toBe(200);
-    expect(res.json().error).toEqual({ code: -32603, message: "ECONNREFUSED" });
+    // Review fix: the internal error message (pg/undici internals in
+    // production) must never reach the wire on this publicly-advertised
+    // endpoint — only a generic message, regardless of the thrown error's text.
+    expect(res.json().error).toEqual({ code: -32603, message: "internal error" });
   });
 
   it("echoes a null id when the request omits one", async () => {
