@@ -1,0 +1,11 @@
+{
+  "$schema": "https://railway.com/railway.schema.json",
+  "build": {
+    "builder": "RAILPACK",
+    "buildCommand": "pnpm install --frozen-lockfile && pnpm --filter @grantfox/shared build && pnpm --filter @ctd/sdk build && pnpm --filter @grantfox/api build"
+  },
+  "deploy": {
+    "startCommand": "node api/dist/worker.js",
+    "numReplicas": 1
+  }
+}
