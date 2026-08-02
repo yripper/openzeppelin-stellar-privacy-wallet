@@ -18,6 +18,8 @@ import { TESTNET } from "@grantfox/shared";
 
 import { useWallet } from "../providers/WalletProvider.js";
 import { stroopsToXlm, truncateAddress, truncateHash, xlmToStroops } from "../lib/format.js";
+import { humanizeRelayerError } from "../lib/relayer-errors.js";
+import { recordSppBoundaryEvent } from "../lib/spp-boundary-log.js";
 import {
   connectSppRail,
   SPP_BOOTNODE_URL,
@@ -55,6 +57,64 @@ type RecipientStatus =
   | { kind: "invalid" };
 
 /**
+ * Human-readable messages for the shielded pool contract's own error codes.
+ *
+ * Soroban surfaces a failed simulation/submission as a `HostError` string
+ * carrying `Error(Contract, #N)` — the SAME convention `@ctd/sdk`'s
+ * `humanizeContractError` decodes for the CT contract, deliberately NOT
+ * reused here: importing `@ctd/sdk` (even just that one function) pulls its
+ * bb.js/UltraHonk proving graph into the SPP tab's bundle
+ * (`docs/modules/app.md`'s Task 11 vite gotchas, and `errors.ts`'s own module
+ * doc), so this file duplicates the small regex instead of sharing it
+ * cross-rail.
+ *
+ * Codes mirror the deployed pool contract's error enum, verified against the
+ * REFERENCE source only —
+ * `resources/stellar-private-payments/contracts/pool/src/pool.rs:32-61`, not
+ * part of this repo's buildable tree, same "scratch reference" status as
+ * `resources/stellar-confidential-token-demo/` (see `docs/modules/ctd-sdk.md`'s
+ * "Vendoring" section). Covers the `pool` contract only (shield/send/unshield
+ * go through it); the asp-membership/asp-non-membership/registry contracts'
+ * own error enums are NOT covered here — a documented gap, not a silent one.
+ */
+const SPP_POOL_ERRORS: Readonly<Record<number, string>> = {
+  1: "Not authorized to perform this shielded operation.",
+  2: "The shielded pool's note tree is full — no more shielded transactions can be accepted right now.",
+  3: "The shielded pool is already initialized.",
+  4: "Invalid pool configuration.",
+  5: "Internal pool error (bad note-tree index).",
+  6: "Invalid transfer amount.",
+  7: "The zero-knowledge proof for this transaction was rejected.",
+  8: "This transaction was built against an outdated pool state — try again after a refresh.",
+  9: "This note has already been spent (double-spend rejected).",
+  10: "This transaction's external data does not match what was proven — try again.",
+  11: "The shielded pool is not initialized.",
+  12: "Arithmetic overflow while processing this transaction.",
+  13: "Invalid proof input.",
+  14: "Unsupported policy configuration.",
+};
+
+const SPP_CONTRACT_CODE_RE = /Error\(Contract,\s*#(\d+)\)/;
+
+/**
+ * Humanize a raw SPP failure message: first the pool contract's own table
+ * above, then the relayer table (`moveToSession`'s SAC transfer and the
+ * session account's funding step both go through `kit`/the relayer, same as
+ * the CT rail — see `relayer-errors.ts`'s module doc), else the original text
+ * unchanged (the SDK's `pool_err_message` already does some of its own
+ * humanizing for non-contract failures, e.g. ASP-sync messages).
+ */
+export function humanizeSppError(raw: string): string {
+  const trimmed = raw.trim();
+  const codeMatch = SPP_CONTRACT_CODE_RE.exec(trimmed);
+  if (codeMatch) {
+    const known = SPP_POOL_ERRORS[Number(codeMatch[1])];
+    if (known) return known;
+  }
+  return humanizeRelayerError(trimmed) ?? trimmed;
+}
+
+/**
  * Turn the SDK's execute envelope (`{status:"ok"|"failed"|"aspNotReady"}`,
  * which RESOLVES on failure rather than throwing) into user-facing copy.
  */
@@ -68,12 +128,20 @@ export function describeResult(result: SppExecuteResult, label: string): Notice 
     };
   }
   if (result.status === "failed") {
+    // SEP-0043 -4: the wallet/signer declined to sign — not a contract or
+    // network failure, so it gets its own copy rather than the pool-error
+    // table (`code`'s doc: `sdk/web/src/client/execute/mod.rs`'s
+    // `ExecuteJsResponse::Failed.code`, "present when the failure was a
+    // wallet user rejection").
+    if (result.code === -4) {
+      return { kind: "warn", text: `${label} was canceled before it could be signed.` };
+    }
     const submitted = result.hashes.length
       ? ` (${result.hashes.length} transaction(s) already submitted: ${result.hashes
           .map(truncateHash)
           .join(", ")})`
       : "";
-    return { kind: "error", text: `${label} failed: ${result.message}${submitted}` };
+    return { kind: "error", text: `${label} failed: ${humanizeSppError(result.message)}${submitted}` };
   }
   const last = result.hashes[result.hashes.length - 1];
   return {
@@ -85,7 +153,8 @@ export function describeResult(result: SppExecuteResult, label: string): Notice 
 }
 
 function errorNotice(error: unknown, label: string): Notice {
-  return { kind: "error", text: `${label} failed: ${error instanceof Error ? error.message : String(error)}` };
+  const raw = error instanceof Error ? error.message : String(error);
+  return { kind: "error", text: `${label} failed: ${humanizeSppError(raw)}` };
 }
 
 /**
@@ -490,7 +559,18 @@ export default function Shielded() {
             if (stroops === undefined) return;
             void run("shield", async () => {
               const result = await rail.shield(stroops);
-              if (result.status === "ok") setShieldAmount("");
+              if (result.status === "ok") {
+                setShieldAmount("");
+                // A shield is a public boundary event (public XLM -> pool) —
+                // recorded for the unified Activity view. See
+                // `spp-boundary-log.ts`'s module doc for why this can't be
+                // read back from chain/SDK state instead.
+                await recordSppBoundaryEvent(rail.sessionAddress, {
+                  type: "shield",
+                  amount: stroops.toString(),
+                  hashes: result.hashes,
+                });
+              }
               return describeResult(result, `Shielding ${stroopsToXlm(stroops)} XLM`);
             });
           }}
@@ -614,7 +694,15 @@ export default function Shielded() {
             if (stroops === undefined) return;
             void run("unshield", async () => {
               const result = await rail.unshield(stroops);
-              if (result.status === "ok") setUnshieldAmount("");
+              if (result.status === "ok") {
+                setUnshieldAmount("");
+                // The pool -> public-XLM boundary event, same rationale as shield above.
+                await recordSppBoundaryEvent(rail.sessionAddress, {
+                  type: "unshield",
+                  amount: stroops.toString(),
+                  hashes: result.hashes,
+                });
+              }
               return describeResult(result, `Unshielding ${stroopsToXlm(stroops)} XLM`);
             });
           }}

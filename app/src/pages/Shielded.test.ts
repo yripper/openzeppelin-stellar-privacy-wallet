@@ -16,6 +16,7 @@ import { SppWalletSwitchError, type SppRail } from "../lib/spp.js";
 import {
   connectReducer,
   describeResult,
+  humanizeSppError,
   initialConnectState,
   resolveNotices,
   type ConnectEvent,
@@ -97,6 +98,47 @@ describe("describeResult", () => {
       "Shielding"
     );
     expect(notice.text).not.toContain("already submitted");
+  });
+
+  it("humanizes a known pool contract error code instead of showing the raw HostError text", () => {
+    const notice = describeResult(
+      { status: "failed", hashes: [], message: "HostError: Error(Contract, #9)\nEvent log (newest first):" },
+      "Shielded send"
+    );
+    expect(notice.text).toContain("already been spent");
+    expect(notice.text).not.toContain("HostError");
+  });
+
+  it("reports a SEP-0043 user-rejection (code -4) as a cancellation, not a failure", () => {
+    const notice = describeResult(
+      { status: "failed", hashes: [], message: "wallet request rejected by user: declined", code: -4 },
+      "Shielding 10 XLM"
+    );
+    expect(notice.kind).toBe("warn");
+    expect(notice.text).toContain("canceled");
+    expect(notice.text).not.toContain("failed");
+  });
+});
+
+describe("humanizeSppError", () => {
+  it("maps every documented pool contract error code to non-empty copy", () => {
+    for (let code = 1; code <= 14; code += 1) {
+      const message = humanizeSppError(`HostError: Error(Contract, #${code})`);
+      expect(message.length).toBeGreaterThan(0);
+      expect(message).not.toContain("Error(Contract");
+    }
+  });
+
+  it("falls back to the relayer table for a relayer-originated failure (session funding)", () => {
+    expect(humanizeSppError("FEE_LIMIT_EXCEEDED")).toContain("fee-sponsoring quota");
+  });
+
+  it("passes an unrecognized message through unchanged", () => {
+    expect(humanizeSppError("network request failed")).toBe("network request failed");
+  });
+
+  it("passes through an unknown contract code's raw text (no table entry to invent)", () => {
+    expect(humanizeSppError("Error(Contract, #999)")).toBe("Error(Contract, #999)");
   });
 });
 

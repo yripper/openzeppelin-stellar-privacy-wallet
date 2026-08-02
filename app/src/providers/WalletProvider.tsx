@@ -18,6 +18,7 @@ import { TESTNET } from "@grantfox/shared";
 
 import { kit } from "../lib/kit.js";
 import { createBundle, loadBundle, saveBundle, type PrivacyBundle } from "../lib/privacy-bundle.js";
+import { humanizeRelayerError } from "../lib/relayer-errors.js";
 
 type WalletStatus = "restoring" | "creating" | "connecting" | "connected" | "disconnected";
 
@@ -43,7 +44,8 @@ const WalletContext = createContext<WalletContextValue | undefined>(undefined);
 /** Deploy succeeded and confirmed on-chain -> the successful branch's `hash`; otherwise throws. */
 function assertDeployed(submitResult: Awaited<ReturnType<typeof kit.createWallet>>["submitResult"]): void {
   if (submitResult && !submitResult.success) {
-    throw new Error(submitResult.error.message);
+    const raw = submitResult.error.message;
+    throw new Error(humanizeRelayerError(raw) ?? raw);
   }
   if (!submitResult) {
     throw new Error("Wallet deployment did not submit (no submitResult).");

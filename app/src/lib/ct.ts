@@ -54,6 +54,7 @@ import { kit } from "./kit.js";
 import { API_URL } from "./api-url.js";
 import { ensureBrowserBackend } from "./bb-loader.js";
 import { ApiIndexerClient } from "./ct-indexer.js";
+import { humanizeError } from "./errors.js";
 
 /**
  * `@grantfox/api`'s base URL — the same base the wallet reads its activity feed
@@ -157,7 +158,7 @@ export class CtRail {
     );
     const result = await kit.signAndSubmit(tx);
     if (!result.success) {
-      throw new Error(result.error.message);
+      throw new Error(humanizeError(result.error));
     }
     return result.hash;
   }

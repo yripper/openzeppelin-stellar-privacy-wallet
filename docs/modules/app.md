@@ -2,7 +2,7 @@
 
 > **Living document.** Read this before modifying the module. Update it in the same change whenever the module's behavior, endpoints, files, or dependencies change.
 
-**Source:** `app/` · **Last verified:** 2026-08-01 (Task 12)
+**Source:** `app/` · **Last verified:** 2026-08-02 (Task 14 — unified activity view, error humanization, empty/loading polish)
 
 ## Purpose
 
@@ -61,6 +61,58 @@ lifecycle, session-account funding/sweep, pool ops), and `pages/Shielded.tsx`
    the deployment ledger, so without our endpoint the SDK cannot sync the pool
    at all. Proven live: see Testing.
 
+**Task 14 — unified activity view, error humanization, submission polish.**
+Three additive pieces, none removing or changing either per-rail tab:
+
+1. **A third "Activity" tab** (`pages/Activity.tsx`, wired into `Shell.tsx`'s
+   `TABS`) presenting CT activity (reusing `ActivityFeed` unchanged, inside
+   its own `CtProvider`) and SPP shield/unshield boundary events
+   (`components/SppBoundaryFeed.tsx`) as two separate, clearly-labeled
+   sections — NOT one chronologically-interleaved list. See
+   `pages/Activity.tsx`'s module doc for why: CT rows are ledger-ordered, SPP
+   boundary rows are ordered by this browser's local clock, and there is no
+   reliable client-side conversion between the two without an extra
+   per-row network lookup this view doesn't do.
+2. **SPP boundary events are recorded locally by the app**
+   (`lib/spp-boundary-log.ts`, idb-keyval — same persistence convention as
+   `privacy-bundle.ts`), not read back from chain or SDK state. This was a
+   deliberate, verified choice, not a shortcut: the pool contract's own
+   on-chain events carry no plaintext amount/address at all (`NewCommitmentEvent`/
+   `NewNullifierEvent` only — checked against the vendored reference source,
+   `resources/stellar-private-payments/contracts/pool/src/pool.rs:191-210`,
+   not part of this repo's buildable tree); this repo's own indexer doesn't
+   track the native XLM SAC (only the 4 SPP-specific contracts,
+   `api/src/worker.ts`'s `buildSppContractIds()`); the browser SDK's local
+   note storage has no per-note origin-type field (`UserNoteSummary` in
+   `sdk/types/src/lib.rs`); and the SDK's own purpose-built per-user history
+   table (`UserOperation`/`insert_operation`/`list_operations`) is not
+   exposed through the wasm/JS surface in this vendored version
+   (`stellar-private-payments@0.1.0-alpha.1`'s `sdk/web/js/index.js`'s
+   `wrapClient`/`wrapAccount` have no such method — reachable only from the
+   SDK's own CLI). `lib/spp-boundary-log.ts`'s module doc has the full,
+   source-cited rationale. `Shielded.tsx`'s shield/unshield success handlers
+   call `recordSppBoundaryEvent` right after a successful action; shielded
+   transfers are NEVER recorded (staying unrecorded is the point).
+3. **Error humanization**, three call sites sharing two small tables (kept
+   deliberately separate to preserve the CT-rail/SPP-rail bundle isolation —
+   see Gotchas):
+   - `lib/errors.ts`'s `humanizeError` (CT contract codes 2000-3603 via
+     `@ctd/sdk`'s `humanizeContractError`, plus the relayer table below) —
+     used by `ct.ts`'s `invoke()`, the one chokepoint every CT write op
+     shares.
+   - `lib/relayer-errors.ts`'s `humanizeRelayerError` (`smart-account-kit`'s
+     `RelayerErrorCodes`, matched against message TEXT — see that module's
+     doc for why the structured code doesn't survive `smart-account-kit@0.4.2`'s
+     own submission path) — used by `ct.ts` (via `errors.ts`), `spp.ts`'s
+     `moveToSession()`, `providers/WalletProvider.tsx`'s `assertDeployed`,
+     and `pages/Shielded.tsx`'s `humanizeSppError`.
+   - `pages/Shielded.tsx`'s `humanizeSppError` (a small local SPP pool
+     contract error table, codes 1-14, cited against the same vendored
+     reference source as point 2 above) layered with `humanizeRelayerError` —
+     used by `describeResult`'s `failed` branch (also special-cases SEP-0043
+     `code: -4`, "canceled in your wallet", as a `warn` not an `error`) and
+     `errorNotice`.
+
 ## Structure
 
 | Path | Purpose |
@@ -90,9 +142,14 @@ lifecycle, session-account funding/sweep, pool ops), and `pages/Shielded.tsx`
 | `app/src/pages/BackupExport.tsx` | Forced backup-export step; "Continue" stays disabled until an export has happened. |
 | `app/src/pages/Connect.tsx` | Returning-user passkey connect; routes to `/restore` if the bundle is missing locally. |
 | `app/src/pages/RestoreBackup.tsx` | Decrypts an uploaded backup file and persists the recovered bundle. |
-| `app/src/pages/Shell.tsx` | Wallet home layout: tab bar, one tab per privacy rail (`Wallet` — details + the Task 11 Confidential dashboard; `Shielded` — the Task 12 SPP rail). |
+| `app/src/pages/Shell.tsx` | Wallet home layout: tab bar, one tab per privacy rail (`Wallet` — details + the Task 11 Confidential dashboard; `Shielded` — the Task 12 SPP rail) plus (Task 14) `Activity` — the unified view. |
 | `app/src/App.tsx`, `app/src/main.tsx` | Route table; app bootstrap (calls `ensureBrowserBackend()` once, browser-guarded). |
 | `app/vitest.config.ts`, `app/vitest.setup.ts` | Unit-test config: plain Node environment + `fake-indexeddb/auto` (jsdom does not implement IndexedDB). |
+| `app/src/pages/Activity.tsx` (Task 14) | The unified Activity tab: `CtProvider` + `ActivityFeed` (CT, reused unchanged) and `SppBoundaryFeed` (SPP boundary log), as two separate sections. `sessionAddress` is a pure derivation from `bundle.sppRootSecret` via `spp-signer.ts`'s `sessionKeypair` — no SPP SDK connection needed just to read the local log. |
+| `app/src/components/SppBoundaryFeed.tsx` (Task 14) | Reads `lib/spp-boundary-log.ts`'s local shield/unshield log for one `sessionAddress`; loading/empty/error states, same shape as `ActivityFeed.tsx`. |
+| `app/src/lib/spp-boundary-log.ts` (Task 14) | `recordSppBoundaryEvent(sessionAddress, {type, amount, hashes})` / `listSppBoundaryEvents(sessionAddress)` — idb-keyval-backed, newest-first, capped at 200 entries per session. Full rationale for why this is recorded locally rather than derived from chain/SDK state is in the file's own module doc (source-cited against `resources/stellar-private-payments`). |
+| `app/src/lib/errors.ts` (Task 14) | `humanizeError(err: unknown): string` — the CT rail's shared error humanizer (`@ctd/sdk`'s `humanizeContractError` + `relayer-errors.ts`'s `humanizeRelayerError`, in that order). Used only by `ct.ts` — deliberately kept out of `spp.ts`/`Shielded.tsx`/`WalletProvider.tsx` since importing `@ctd/sdk` pulls its bb.js/proving graph along with it (see Gotchas). |
+| `app/src/lib/relayer-errors.ts` (Task 14) | `humanizeRelayerError(raw: string): string \| null` — copy for `smart-account-kit`'s `RelayerErrorCodes`, matched against raw message text (see the file's module doc for why the structured code doesn't survive the kit's own submission path). Lightweight (only imports `smart-account-kit`, no bb.js) — safe to import from `spp.ts`/`Shielded.tsx`/`WalletProvider.tsx` directly. |
 
 ## Public surface (key exports, verified `file:line`)
 
@@ -110,7 +167,12 @@ lifecycle, session-account funding/sweep, pool ops), and `pages/Shielded.tsx`
 - `API_URL` (Task 12) — `app/src/lib/api-url.ts:10` (re-exported from `app/src/lib/ct.ts`)
 - `SessionSigner`, `sessionKeypair(sppRootSecret)` (Task 12) — `app/src/lib/spp-signer.ts:88,122`
 - `SppRail` (`.connect`/`.refresh`/`.resync`/`.sessionState`/`.fundSessionFromFriendbot`/`.moveToSession`/`.sweepToWallet`/`.registerPublicKeys`/`.lookupRecipient`/`.shield`/`.sendShielded`/`.unshield`/`.destroy`), `connectSppRail`, `SppWalletSwitchError`, `loadSppSdk`, `asExecuteResult`, `stroopsToKitXlm`, `SPP_BOOTNODE_URL`, `SPP_PROGRESS_EVENT`, `SPP_CONNECT_PHASE_LABELS`, `SppView`, `SppExecuteResult`, `SppRecipientLookup`, `SppConnectPhase`/`SppConnectOptions`, `SppProgressDetail` (Task 12) — `app/src/lib/spp.ts`
-- `Shielded` (default export) + `connectReducer`/`initialConnectState`/`ConnectState`/`ConnectEvent`, `resolveNotices`, `describeResult` (exported for unit testing, Task 12) — `app/src/pages/Shielded.tsx`
+- `Shielded` (default export) + `connectReducer`/`initialConnectState`/`ConnectState`/`ConnectEvent`, `resolveNotices`, `describeResult`, `humanizeSppError` (exported for unit testing; `humanizeSppError` added Task 14) — `app/src/pages/Shielded.tsx`
+- `humanizeError` (Task 14) — `app/src/lib/errors.ts:44`
+- `humanizeRelayerError` (Task 14) — `app/src/lib/relayer-errors.ts:60`
+- `SppBoundaryEvent`, `SppBoundaryEventType`, `recordSppBoundaryEvent`, `listSppBoundaryEvents` (Task 14) — `app/src/lib/spp-boundary-log.ts`
+- `SppBoundaryFeed` (default export, Task 14) — `app/src/components/SppBoundaryFeed.tsx`
+- `Activity` (default export, Task 14) — `app/src/pages/Activity.tsx`
 
 ## Dependencies
 
@@ -150,6 +212,10 @@ lifecycle, session-account funding/sweep, pool ops), and `pages/Shielded.tsx`
 - **(Task 12) One rail per page, memoized in `spp.ts` — do NOT add a second "already connecting" guard in the component.** Two live clients on the same OPFS database race each other (the SDK's own `stopBackgroundSync` doc says so). `connectSppRail` therefore returns the SAME in-flight promise for a repeated call. An extra `useRef` guard in `Shielded.tsx` on top of that was written first and **deadlocked the tab**: under React StrictMode's mount → cleanup → mount, the guard made the second (live) effect return early while the first effect's cleanup had already set its `cancelled` flag, so the resolved rail was never handed to React — a permanent "Loading…" with a *fully successful* sync behind it (the SDK's own telemetry showed the bootnode handoff completing). Diagnosed live during Task 12's gate by adding the connect-phase reporting (`SppConnectPhase`) and reading `dump_recent_logs()` from the page. `connectSppRail` also re-points its phase listener at the LATEST caller and replays the current phase on a cache hit, for the same StrictMode reason — and only ever ADDS a listener: assigning `options?.onPhase` unconditionally would silently detach the live subscriber whenever a caller passes none (the same failure class, in the opposite direction).
 - **(Task 12) The `/spp/**` vendored assets need no `serveVendorRaw`-style middleware**, unlike `/vendor/bb/**`. That workaround exists because bb.js is reached by a dynamic `import()` *from source*, which trips Vite's publicDir guard; the SPP workers are reached by `new Worker(url)` and their own static imports, i.e. plain browser requests that Vite's normal static middleware serves — with `server.headers`' COOP/COEP attached. Verified live: both `/spp/workers/{storage,prover}-worker.js` return 200 with `Cross-Origin-Embedder-Policy: credentialless`, and both workers actually spawn (`page.workers()`).
 
+- **(Task 14) `lib/errors.ts` (CT-aware) must never be imported from `spp.ts`/`Shielded.tsx`/`WalletProvider.tsx`.** It imports `humanizeContractError` from `@ctd/sdk`, and importing ANYTHING from `@ctd/sdk`'s root pulls the WHOLE barrel — including the bb.js/UltraHonk proving graph (`export * from "./proving/index.js"`, `packages/ctd-sdk/src/index.ts`) — into whatever bundle imports it. `WalletProvider.tsx` wraps the entire app (`App.tsx:14`), so doing this there would eagerly load bb.js on every page load, not just the CT tab. `spp.ts`/`Shielded.tsx` have the same "keep `@ctd/sdk` out of the SPP rail's bundle" rule Task 12 already established for the opposite direction (`api-url.ts`'s extraction). The fix: `relayer-errors.ts` is a second, lightweight module (only imports `smart-account-kit`, already a dependency everywhere `kit.ts` is used) that every non-CT call site imports directly instead of going through `errors.ts`.
+- **(Task 14) The SPP pool contract's on-chain events carry no plaintext amount or address, for shield/send/unshield alike** — verified against the vendored reference source, `resources/stellar-private-payments/contracts/pool/src/pool.rs:191-210` (`NewCommitmentEvent{commitment, index, encrypted_output}` and `NewNullifierEvent{nullifier}` are the ONLY two events the contract publishes — `grep -n "\.publish(" contracts/pool/src/pool.rs`). This is why `spp-boundary-log.ts` records shield/unshield locally instead of deriving them from `events` the way the CT rail's activity feed does — there's no server-side equivalent to read back, by the pool's own design (privacy pools intentionally don't emit plaintext boundary events at the contract layer the way a naive design might). Full rationale (including why the SDK's own local note/history surfaces don't help either) is in `spp-boundary-log.ts`'s module doc.
+- **(Task 14) The unified Activity view does NOT interleave CT and SPP rows into one sorted timeline.** CT activity rows carry a `ledger` (on-chain sequence number); SPP boundary rows carry `createdAt` (this browser's local clock at record time, from `spp-boundary-log.ts`) — two clocks with no reliable client-side conversion (would need a per-row ledger-close-time lookup this view doesn't perform). `Activity.tsx` presents them as two separately-ordered sections rather than fabricate a merged chronological order the data doesn't actually support.
+
 ## Testing
 
 - `pnpm --filter app test` (`vitest run`) — 13 tests across `src/lib/privacy-bundle.test.ts` (8) and `src/lib/backup.test.ts` (5). Verified passing; both suites were mutation-tested during development (temporarily reintroducing the exact bugs the tests target — deriving `addr_f` from `cAddress` instead of the token, and swallowing the GCM auth failure instead of rethrowing — to confirm the assertions actually catch them, not just pass vacuously).
@@ -178,3 +244,5 @@ lifecycle, session-account funding/sweep, pool ops), and `pages/Shielded.tsx`
   - **Sync through OUR bootnode endpoint, proven three ways** on a genuinely fresh third profile (Carol, wallet `CDBW5LPX…VZPNT`, empty OPFS): the SDK's own telemetry (`dump_recent_logs()`) logged `main RPC sync gap, trying bootnode at http://localhost:3801/rpc` followed by `bootnode handoff, resuming on main RPC`; Playwright counted 4 `POST /rpc` requests to our API (first one 450 ms after the tab opened); and the API server's own request log recorded them (all `200`, ~0.5-0.6 s each) — i.e. Task 9's handoff branch exercised for real. Full connect took 44 s and the fresh profile then correctly resolved Bob's minutes-old registration ("Ready to receive") while reporting an unregistered address as unregistered, so both the historical (bootnode) and recent (main RPC) legs completed.
   - No key material (`sppRootSecret`, session secret, derived privacy keys) appears in any console output, UI surface, or log — verified by `grep` over the new files (one `console.warn`, an SDK-teardown error message) and by reviewing the captured console transcripts.
   - Full transcript: task-12 report (`.superpowers/sdd/2026-07-31-privacy-wallet/task-12-report.md`, gitignored).
+- **Task 14 (2026-08-02)**: `pnpm --filter app test` (`vitest run`) — 119 tests (92 prior + 9 `errors.test.ts` + 7 `relayer-errors.test.ts` + 6 new cases in `Shielded.test.ts` [pool-contract-code humanization, SEP-0043 `-4` cancellation, `humanizeSppError` unit cases] + 5 `spp-boundary-log.test.ts`). `humanizeError`/`humanizeRelayerError`/`humanizeSppError` are each tested against every value of their respective source-of-truth table (every `RelayerErrorCodes` value; every SPP pool contract code 1-14; representative real CT codes 3501/3601/3500 plus an unmapped-but-parseable code to prove the generic fallback fires) rather than a handful of hand-picked examples, so a future table edit that silently drops an entry fails the suite. `pnpm --filter app run typecheck` and a clean `pnpm --filter app run build` (from `rm -rf dist public/vendor public/spp`) — both green.
+  - **Live (scoped smoke, not a full re-verification)**: a fresh Playwright run (CDP WebAuthn virtual authenticator, local dev — `api`/`worker` against docker Postgres) onboarded a real wallet end to end (passkey create → deploy → friendbot fund → bundle → forced backup export → `/wallet`), confirmed the tab bar now shows all three tabs (`Wallet`, `Shielded`, `Activity`), and that the Activity tab renders both sections correctly on a fresh account: "Activity" (CT, `ActivityFeed` reused) showing "No activity yet.", and "Shielded pool boundary events" showing its explanatory copy plus "No shielded boundary events yet." — proving `CtProvider` mounts a second, independent `CtRail` without erroring and `SppBoundaryFeed`'s `sessionAddress` derivation/idb-keyval read work end to end. Switching to the `Shielded` tab afterward rendered normally. Zero new console errors — the one `400` logged is the pre-existing, already-documented relayer-then-RPC-fallback gotcha (this section, Task 10's entry), unrelated to this task. **Not re-verified live**: the CT/SPP proving/signing/submission call paths themselves — `ct.ts`/`spp.ts`'s edits are error-message-only, wrapping an already-thrown/returned error string, and the execute flows Task 11/12 verified live are otherwise untouched, so the humanized error COPY itself was verified via the unit suite above (every table value), not by forcing a live failure.

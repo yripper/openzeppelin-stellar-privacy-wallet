@@ -59,6 +59,7 @@ import type {
 
 import { kit } from "./kit.js";
 import { API_URL } from "./api-url.js";
+import { humanizeRelayerError } from "./relayer-errors.js";
 import { SessionSigner, sessionKeypair } from "./spp-signer.js";
 
 /** The SDK module, loaded lazily (its wasm glue + 2 MB `.wasm` are not worth paying for until the Shielded tab opens). */
@@ -430,7 +431,7 @@ export class SppRail {
       stroopsToKitXlm(stroops)
     );
     if (!result.success) {
-      throw new Error(result.error.message);
+      throw new Error(humanizeRelayerError(result.error.message) ?? result.error.message);
     }
     return result.hash;
   }
