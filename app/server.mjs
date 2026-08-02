@@ -30,26 +30,59 @@ const MIME_TYPES = {
   ".txt": "text/plain; charset=utf-8",
 };
 
-/** Resolves a request path to a real file under `DIST_DIR`, or `null` (SPA fallback territory). Blocks `../` escapes. */
-function resolveFile(urlPath) {
-  const safePath = normalize(decodeURIComponent(urlPath)).replace(/^([/\\]?\.\.[/\\])+/, "");
+/** Resolves an ALREADY-DECODED request path to a real file under `DIST_DIR`, or `null` (SPA fallback territory). Blocks `../` escapes. */
+function resolveFile(decodedPathname) {
+  const safePath = normalize(decodedPathname).replace(/^([/\\]?\.\.[/\\])+/, "");
   const filePath = join(DIST_DIR, safePath);
   return existsSync(filePath) && statSync(filePath).isFile() ? filePath : null;
 }
 
-const server = createServer((req, res) => {
-  const pathname = new URL(req.url ?? "/", "http://localhost").pathname;
+const INDEX_HTML = join(DIST_DIR, "index.html");
 
-  // Cross-origin isolation on every response (see module doc above).
+const server = createServer((req, res) => {
+  // Cross-origin isolation on every response (see module doc above) — set
+  // before any early return so even error responses carry it.
   res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
   res.setHeader("Cross-Origin-Embedder-Policy", "credentialless");
+
+  if (req.method !== "GET" && req.method !== "HEAD") {
+    res.statusCode = 405;
+    res.setHeader("Allow", "GET, HEAD");
+    res.end("Method not allowed");
+    return;
+  }
+
+  // `decodeURIComponent` throws `URIError` on malformed percent-encoding
+  // (`%`, `%zz`, a truncated multi-byte sequence like `%E0%A4%A` — routine
+  // scanner/bot traffic, not an edge case). Node has no default error
+  // boundary around a synchronous throw in an http request listener: it
+  // becomes an uncaught exception and takes the whole process down.
+  // Reproduced locally pre-fix; caught here so it's a 400, not an outage.
+  let pathname;
+  try {
+    pathname = decodeURIComponent(new URL(req.url ?? "/", "http://localhost").pathname);
+  } catch {
+    res.statusCode = 400;
+    res.end("Bad request");
+    return;
+  }
+
   if (pathname.startsWith("/vendor/bb/") || pathname.startsWith("/spp/")) {
     res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
   }
 
   // SPA fallback: any path that isn't a real file under dist/ serves
   // index.html so react-router's client-side routes resolve on a hard load.
-  const filePath = resolveFile(pathname) ?? join(DIST_DIR, "index.html");
+  const filePath = resolveFile(pathname) ?? INDEX_HTML;
+
+  // Vite's `/assets/*` output is content-hashed (safe to cache forever);
+  // everything else — including index.html itself, both direct hits and
+  // the SPA fallback above — must be revalidated every time, since
+  // index.html is what points at the current deploy's hashed asset names.
+  res.setHeader(
+    "Cache-Control",
+    pathname.startsWith("/assets/") ? "public, max-age=31536000, immutable" : "no-cache",
+  );
   res.setHeader("Content-Type", MIME_TYPES[extname(filePath)] ?? "application/octet-stream");
   createReadStream(filePath)
     .on("error", () => {
