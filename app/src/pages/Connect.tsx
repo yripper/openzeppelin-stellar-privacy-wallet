@@ -1,8 +1,10 @@
 /**
  * Returning-user flow: authenticate with the existing passkey and restore
  * the smart-account session. If the privacy bundle isn't in this browser's
- * IndexedDB (new device, cleared storage), send the user to restore it from
- * an encrypted backup instead of silently proceeding without CT/SPP keys.
+ * IndexedDB (new device, cleared storage) OR it's paired to a DIFFERENT
+ * wallet (`WalletProvider`'s `bundleMismatch` — this browser's bundle slot
+ * holds another wallet's keys), send the user to restore from an encrypted
+ * backup instead of silently proceeding without/with-the-wrong CT/SPP keys.
  */
 import { useState } from "react";
 import { useNavigate } from "react-router";
@@ -20,8 +22,11 @@ export default function Connect() {
     setBusy(true);
     setError(undefined);
     try {
-      const { bundleMissing } = await connectExisting();
-      navigate(bundleMissing ? "/restore" : "/wallet", { replace: true });
+      const { bundleMissing, bundleMismatch } = await connectExisting();
+      navigate(bundleMissing ? "/restore" : "/wallet", {
+        replace: true,
+        state: bundleMismatch ? { mismatch: true } : undefined,
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {

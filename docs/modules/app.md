@@ -2,7 +2,7 @@
 
 > **Living document.** Read this before modifying the module. Update it in the same change whenever the module's behavior, endpoints, files, or dependencies change.
 
-**Source:** `app/` · **Last verified:** 2026-08-02 (Task 14 — unified activity view, error humanization, empty/loading polish)
+**Source:** `app/` · **Last verified:** 2026-08-02 (final fix wave — privacy bundle now paired to its wallet, see "Wallet/bundle pairing" below)
 
 ## Purpose
 
@@ -127,7 +127,7 @@ Three additive pieces, none removing or changing either per-rail tab:
 | `app/scripts/vendor-spp.mjs` | Copies `stellar-private-payments`'s `dist/` tree to `public/spp/`, preserving `workers/`↔`circuits/` siblinghood (predev/prebuild/prepreview). Gitignored output. |
 | `app/src/lib/kit.ts` | `SmartAccountKit` singleton, config sourced from `@grantfox/shared`'s `TESTNET`. |
 | `app/src/lib/bb-loader.ts` | `ensureBrowserBackend()` — points `@ctd/sdk`'s UltraHonk backend loader at the vendored `/vendor/bb/index.js` (native ESM, not bundled). Exercised live by Task 11's proving calls (register/transfer/withdraw). |
-| `app/src/lib/privacy-bundle.ts` (+ `.test.ts`) | `PrivacyBundle` type, `createBundle`/`saveBundle`/`loadBundle`/`clearBundle` (IndexedDB via `idb-keyval`). |
+| `app/src/lib/privacy-bundle.ts` (+ `.test.ts`) | `PrivacyBundle` type (carries `walletContractId`, final fix wave), `createBundle`/`saveBundle`/`loadBundle`/`clearBundle` (IndexedDB via `idb-keyval`), `resolveBundleForWallet`/`pairImportedBundle`/`BundleOwnerMismatchError` (wallet/bundle pairing — see "Wallet/bundle pairing" below). |
 | `app/src/lib/backup.ts` (+ `.test.ts`) | `exportBackup`/`importBackup` — WebCrypto PBKDF2→AES-256-GCM envelope for the privacy bundle. |
 | `app/src/lib/api-url.ts` (Task 12) | `API_URL` — the one definition of `@grantfox/api`'s base URL (`VITE_API_URL`, default `http://localhost:3000`). Extracted out of `ct.ts` (which still re-exports it, unchanged public surface) so `spp.ts` can build its bootnode URL without importing the CT rail's `@ctd/sdk`/bb.js module graph. |
 | `app/src/lib/spp-signer.ts` (+ `.test.ts`, Task 12) | `SessionSigner implements WalletSigner` (`stellar-private-payments`) over a `Keypair` — `getPublicKey`, deterministic `signMessage` (raw UTF-8 message bytes, base64; RFC 8032 determinism is what makes the SDK's derived note/encryption keys reproducible from `sppRootSecret`), `signTransaction` (envelope round-trip), `signAuthEntry` (**SHA-256 of the DECODED `HashIdPreimage` bytes**, via WebCrypto since `node:crypto` has no browser equivalent — hence async). Also `sessionKeypair(sppRootSecret)`. Every method's contract is cited to SDK source in the file's module doc. |
@@ -141,12 +141,12 @@ Three additive pieces, none removing or changing either per-rail tab:
 | `app/src/components/SendForm.tsx` (Task 11) | Recipient address + a live "is this address registered for confidential transfers?" check on blur/paste (`rail.isRegistered`, CT contract read via simulation) — shows "ask them to activate privacy first" copy when unregistered; amount; submits via `rail.transfer`. |
 | `app/src/components/ActivityFeed.tsx` (Task 11) | `GET /accounts/:address/activity` (`@grantfox/api`'s own feed) newest-first; `deposit`/`withdraw` amounts are public (already on the row); `transfer` amounts are `null` on the row and decrypted client-side per-row (`rail.resolveActivityEvent` + `rail.decryptTransferAmount`), showing a `+`/`-` sign by resolved direction. |
 | `app/src/pages/Confidential.tsx` (Task 11) | Composes `CtProvider` + `BalanceCard`/`SendForm`/`ActivityFeed`; rendered inside `Shell`'s "Wallet" tab (`Shell.tsx` updated Task 11 — tab bar reduced to `Wallet`/`Deposit`, since CT's send + activity now live inside the Wallet tab's Confidential dashboard rather than as separate placeholder tabs; `Deposit` remains a Task-12 SPP stub). |
-| `app/src/providers/WalletProvider.tsx` | `WalletProvider`/`useWallet()` — session restore, `createWallet`, `connectExisting`, `refreshBundle`. |
-| `app/src/pages/Landing.tsx` | Entry point: routes to `/wallet` (session restored) or the create/connect choice. |
+| `app/src/providers/WalletProvider.tsx` | `WalletProvider`/`useWallet()` — session restore, `createWallet`, `connectExisting`, `refreshBundle`. `bundleMismatch` (final fix wave) exposes whether this session's wallet has a stored bundle belonging to someone else. |
+| `app/src/pages/Landing.tsx` | Entry point: routes to `/wallet` (session restored) or the create/connect choice; to `/restore` instead if the silently-restored session hits a `bundleMismatch` (final fix wave). |
 | `app/src/pages/Onboarding.tsx` | First-time-user flow: passkey-create + fund + mint bundle, then forces `/backup-export`. |
 | `app/src/pages/BackupExport.tsx` | Forced backup-export step; "Continue" stays disabled until an export has happened. |
-| `app/src/pages/Connect.tsx` | Returning-user passkey connect; routes to `/restore` if the bundle is missing locally. |
-| `app/src/pages/RestoreBackup.tsx` | Decrypts an uploaded backup file and persists the recovered bundle. |
+| `app/src/pages/Connect.tsx` | Returning-user passkey connect; routes to `/restore` if the bundle is missing locally OR paired to a different wallet (`bundleMismatch`, final fix wave). |
+| `app/src/pages/RestoreBackup.tsx` | Decrypts an uploaded backup file, pairs it to the connected wallet (`pairImportedBundle`, final fix wave — rejects a backup for the wrong wallet), and persists the recovered bundle. |
 | `app/src/pages/Shell.tsx` | Wallet home layout: tab bar, one tab per privacy rail (`Wallet` — details + the Task 11 Confidential dashboard; `Shielded` — the Task 12 SPP rail) plus (Task 14) `Activity` — the unified view. |
 | `app/src/App.tsx`, `app/src/main.tsx` | Route table; app bootstrap (calls `ensureBrowserBackend()` once, browser-guarded). |
 | `app/vitest.config.ts`, `app/vitest.setup.ts` | Unit-test config: plain Node environment + `fake-indexeddb/auto` (jsdom does not implement IndexedDB). |
@@ -159,10 +159,11 @@ Three additive pieces, none removing or changing either per-rail tab:
 ## Public surface (key exports, verified `file:line`)
 
 - `kit` (`SmartAccountKit` instance) — `app/src/lib/kit.ts:14`
-- `PrivacyBundle`, `createBundle(cAddress)`, `saveBundle`, `loadBundle`, `clearBundle` — `app/src/lib/privacy-bundle.ts:16,57,67,71,76`
+- `PrivacyBundle`, `createBundle(cAddress)`, `saveBundle`, `loadBundle`, `clearBundle` — `app/src/lib/privacy-bundle.ts:16,70,80,84,89`
+- `BundleLookupResult`, `resolveBundleForWallet(contractId)`, `BundleOwnerMismatchError`, `pairImportedBundle(imported, contractId)` (final fix wave — wallet/bundle pairing) — `app/src/lib/privacy-bundle.ts:93,119,133,157`
 - `BackupEnvelope`, `BackupDecryptionError`, `exportBackup(bundle, passphrase)`, `importBackup(file, passphrase)` — `app/src/lib/backup.ts:20,30,68,85`
 - `ensureBrowserBackend()` — `app/src/lib/bb-loader.ts:29`
-- `WalletProvider`, `useWallet()` — `app/src/providers/WalletProvider.tsx:53,166`
+- `WalletProvider`, `useWallet()` — `app/src/providers/WalletProvider.tsx:64,204`
 - `stroopsToXlm`, `xlmToStroops`, `truncateAddress`, `truncateHash` (Task 11) — `app/src/lib/format.ts`
 - `ApiIndexerClient`, `parseApiEvent` (Task 11) — `app/src/lib/ct-indexer.ts`
 - `CtRail` (`.connect`, `.register`/`.deposit`/`.merge`/`.transfer`/`.withdraw`/`.refresh`/`.isRegistered`/`.publicBalance`/`.decryptTransferAmount`/`.resolveActivityEvent`/`.destroy`), `CtView`, `API_URL` (Task 11) — `app/src/lib/ct.ts`
@@ -221,6 +222,61 @@ Three additive pieces, none removing or changing either per-rail tab:
 - **(Task 14) The SPP pool contract's on-chain events carry no plaintext amount or address, for shield/send/unshield alike** — verified against the vendored reference source, `resources/stellar-private-payments/contracts/pool/src/pool.rs:191-210` (`NewCommitmentEvent{commitment, index, encrypted_output}` and `NewNullifierEvent{nullifier}` are the ONLY two events the contract publishes — `grep -n "\.publish(" contracts/pool/src/pool.rs`). This is why `spp-boundary-log.ts` records shield/unshield locally instead of deriving them from `events` the way the CT rail's activity feed does — there's no server-side equivalent to read back, by the pool's own design (privacy pools intentionally don't emit plaintext boundary events at the contract layer the way a naive design might). Full rationale (including why the SDK's own local note/history surfaces don't help either) is in `spp-boundary-log.ts`'s module doc.
 - **(Task 14) The unified Activity view does NOT interleave CT and SPP rows into one sorted timeline.** CT activity rows carry a `ledger` (on-chain sequence number); SPP boundary rows carry `createdAt` (this browser's local clock at record time, from `spp-boundary-log.ts`) — two clocks with no reliable client-side conversion (would need a per-row ledger-close-time lookup this view doesn't perform). `Activity.tsx` presents them as two separately-ordered sections rather than fabricate a merged chronological order the data doesn't actually support.
 
+### Wallet/bundle pairing (final fix wave, 2026-08-02 — whole-branch review finding)
+
+**The bug:** this browser's privacy bundle lives in ONE IndexedDB key
+(`privacy-bundle.ts`'s `STORAGE_KEY`), and neither `createWallet` nor
+`connectExisting` checked which wallet it belonged to before using it.
+Sequence: create wallet A (bundle A saved) → create wallet B in the same
+browser (`saveBundle` unconditionally overwrites — bundle is now B's) →
+reconnect A (a different passkey credential, same browser) → `loadBundle()`
+handed A's session B's CT keys/SPP root secret, with no error — A's balance
+would fail to decrypt with no explanation, and A's real keys survived only
+in the forced backup export (if one was made).
+
+**The fix:** `PrivacyBundle` gained `walletContractId` (`privacy-bundle.ts:16`,
+set by `createBundle` from the same `cAddress` already validated there).
+Three call sites now go through pairing-aware helpers instead of raw
+`loadBundle`/`saveBundle`:
+
+- **`WalletProvider`'s silent session-restore effect AND `connectExisting`**
+  both call `resolveBundleForWallet(contractId)` (`privacy-bundle.ts:119`):
+  matching `walletContractId` → handed over; a LEGACY bundle (saved before
+  this field existed, `walletContractId` falsy at runtime despite the type
+  saying `string` — IndexedDB doesn't enforce it) → accepted AND stamped
+  with `contractId` (persisted) — the "safer-but-not-annoying" choice,
+  since every bundle predating this fix came from a single-wallet-per-browser
+  world where "whoever connects next" is correct; a bundle paired to a
+  DIFFERENT wallet → withheld (`bundle: undefined`, left untouched on disk)
+  and `WalletState.bundleMismatch` set `true`. `Landing.tsx` (silent
+  restore) and `Connect.tsx` (`connectExisting`'s returned `bundleMismatch`)
+  both route to `/restore` instead of `/wallet` on a mismatch, passing
+  `state: {mismatch: true}` so `RestoreBackup.tsx` shows a distinct message
+  ("belongs to a different wallet") instead of the generic "you don't have
+  keys yet" copy.
+- **`createWallet`** calls plain `loadBundle()` BEFORE the passkey
+  prompt/deploy (a brand-new wallet's `contractId` can never match anything
+  already stored, so ANY existing bundle would be silently destroyed by the
+  unconditional `saveBundle` below it) and, if one exists, `window.confirm`s
+  a blocking warning naming the existing bundle's owner before proceeding —
+  canceling throws and creation never starts, so a "no" costs nothing
+  on-chain.
+- **`RestoreBackup.tsx`** runs every imported bundle through
+  `pairImportedBundle(imported, contractId)` (`privacy-bundle.ts:157`)
+  before `saveBundle`: a legacy import is stamped the same way; an import
+  whose `walletContractId` names a DIFFERENT wallet than the one currently
+  connected throws `BundleOwnerMismatchError` rather than saving — otherwise
+  uploading the wrong backup file would be a second way to reintroduce the
+  exact mismatch this fix exists to prevent.
+
+`BundleLookupResult`/`resolveBundleForWallet`/`BundleOwnerMismatchError`/
+`pairImportedBundle` are all in `privacy-bundle.ts` and unit-tested directly
+(fake-indexeddb, no component-render harness needed — same convention as
+the rest of this file's tests). `WalletProvider.tsx`/`Onboarding.tsx`'s
+`window.confirm` call site is NOT unit tested (this repo has no
+component-render harness, per the Task 12 Gotchas entry above) — covered by
+manual/live verification instead (see Testing).
+
 ## Testing
 
 - `pnpm --filter app test` (`vitest run`) — 13 tests across `src/lib/privacy-bundle.test.ts` (8) and `src/lib/backup.test.ts` (5). Verified passing; both suites were mutation-tested during development (temporarily reintroducing the exact bugs the tests target — deriving `addr_f` from `cAddress` instead of the token, and swallowing the GCM auth failure instead of rethrowing — to confirm the assertions actually catch them, not just pass vacuously).
@@ -251,3 +307,4 @@ Three additive pieces, none removing or changing either per-rail tab:
   - Full transcript: task-12 report (`.superpowers/sdd/2026-07-31-privacy-wallet/task-12-report.md`, gitignored).
 - **Task 14 (2026-08-02)**: `pnpm --filter app test` (`vitest run`) — 119 tests (92 prior + 9 `errors.test.ts` + 7 `relayer-errors.test.ts` + 6 new cases in `Shielded.test.ts` [pool-contract-code humanization, SEP-0043 `-4` cancellation, `humanizeSppError` unit cases] + 5 `spp-boundary-log.test.ts`). `humanizeError`/`humanizeRelayerError`/`humanizeSppError` are each tested against every value of their respective source-of-truth table (every `RelayerErrorCodes` value; every SPP pool contract code 1-14; representative real CT codes 3501/3601/3500 plus an unmapped-but-parseable code to prove the generic fallback fires) rather than a handful of hand-picked examples, so a future table edit that silently drops an entry fails the suite. `pnpm --filter app run typecheck` and a clean `pnpm --filter app run build` (from `rm -rf dist public/vendor public/spp`) — both green.
   - **Live (scoped smoke, not a full re-verification)**: a fresh Playwright run (CDP WebAuthn virtual authenticator, local dev — `api`/`worker` against docker Postgres) onboarded a real wallet end to end (passkey create → deploy → friendbot fund → bundle → forced backup export → `/wallet`), confirmed the tab bar now shows all three tabs (`Wallet`, `Shielded`, `Activity`), and that the Activity tab renders both sections correctly on a fresh account: "Activity" (CT, `ActivityFeed` reused) showing "No activity yet.", and "Shielded pool boundary events" showing its explanatory copy plus "No shielded boundary events yet." — proving `CtProvider` mounts a second, independent `CtRail` without erroring and `SppBoundaryFeed`'s `sessionAddress` derivation/idb-keyval read work end to end. Switching to the `Shielded` tab afterward rendered normally. Zero new console errors — the one `400` logged is the pre-existing, already-documented relayer-then-RPC-fallback gotcha (this section, Task 10's entry), unrelated to this task. **Not re-verified live**: the CT/SPP proving/signing/submission call paths themselves — `ct.ts`/`spp.ts`'s edits are error-message-only, wrapping an already-thrown/returned error string, and the execute flows Task 11/12 verified live are otherwise untouched, so the humanized error COPY itself was verified via the unit suite above (every table value), not by forcing a live failure.
+- **Final fix wave (2026-08-02) — wallet/bundle pairing**: `pnpm --filter app test` (`vitest run`) — 127 tests (119 prior + 8 new in `privacy-bundle.test.ts`: `createBundle` stamps `walletContractId`; `resolveBundleForWallet`'s no-bundle/matching/mismatch-leaves-storage-untouched/legacy-stamp-is-persisted cases; `pairImportedBundle`'s pass-through/legacy-stamp/`BundleOwnerMismatchError` cases). `pnpm --filter app run typecheck` and a clean `pnpm --filter app run build` (from `rm -rf dist public/vendor public/spp`) — both green. The `window.confirm` call site in `WalletProvider.createWallet` and the router-`state`-driven copy in `RestoreBackup.tsx` are UI glue with no component-render harness in this repo (see Task 12's Gotchas entry) — full transcript of live PROD verification (fresh onboard → shield, against `https://app-production-2f5e.up.railway.app`) is in the final-fix-report (`.superpowers/sdd/2026-07-31-privacy-wallet/final-fix-report.md`, gitignored), not repeated here.
