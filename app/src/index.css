@@ -139,10 +139,37 @@ code {
 }
 
 .shell-header strong {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
   font-variation-settings: "wdth" 108, "wght" 650;
   letter-spacing: -0.01em;
 }
 
+/* Two redaction bars, the lower one cut short and inked in the private accent
+   — the interface's own device at logo scale. */
+.mark {
+  display: grid;
+  gap: 3px;
+  align-content: center;
+  width: 16px;
+  height: 14px;
+  flex: none;
+}
+
+.mark i {
+  display: block;
+  height: 4px;
+  background: var(--ink);
+}
+
+.mark i:last-child {
+  width: 60%;
+  background: var(--veil);
+}
+
+/* A button, not a label — a C-address is what someone else needs in order to
+   pay this wallet, so one click puts it on the clipboard. */
 .address-pill {
   padding: 0.25rem 0.5rem;
   border: 1px solid var(--rule);
@@ -150,8 +177,15 @@ code {
   background: transparent;
   font-family: var(--data);
   font-size: 0.625rem;
+  font-variation-settings: "wght" 400;
   color: var(--ink-soft);
   white-space: nowrap;
+  cursor: pointer;
+}
+
+.address-pill:hover {
+  border-color: var(--ink);
+  color: var(--ink);
 }
 
 .tabs {
@@ -290,6 +324,39 @@ button:disabled {
   gap: 1rem;
 }
 
+/* Two balances side by side down to the point where the second one would be
+   too narrow to hold a 7-decimal figure, then stacked. */
+.cells {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  gap: 0.75rem;
+}
+
+.card-header,
+.activity-feed-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.card-header h2,
+.activity-feed-header h2 {
+  margin: 0;
+}
+
+.card-header {
+  margin-bottom: 1rem;
+}
+
+.card-status {
+  margin: 0.75rem 0 0;
+}
+
+.wallet-details {
+  margin-top: 1rem;
+}
+
 .balance-card,
 .send-form,
 .activity-feed {
@@ -310,7 +377,11 @@ button:disabled {
  * This is the one place a near-black surface is correct.
  * ------------------------------------------------------------------------- */
 
-.redacted {
+/* `.cell.redacted`, not `.redacted`: `.cell` sets its own paper background and
+   is declared later in this file, so a single-class rule here loses the
+   cascade and the block renders as near-white text on near-white paper. */
+.redacted,
+.cell.redacted {
   background: var(--ink);
   border-color: var(--ink);
   color: var(--card);
@@ -550,6 +621,28 @@ button:disabled {
   color: var(--ink-soft);
 }
 
+
+/* The backup reminder is a warning about losing money, not a private-money
+   readout — so it takes the exposed accent, not the private one. */
+.banner {
+  margin-bottom: 1.5rem;
+  border-left-color: var(--exposed);
+  background: var(--exposed-wash);
+}
+
+/* A router <Link> that has to read as a button. */
+.button-link {
+  padding: 0.6875rem 1rem;
+  border: 1px solid var(--ink);
+  border-radius: var(--radius);
+  background: var(--ink);
+  color: var(--card);
+  font-size: 0.8125rem;
+  font-variation-settings: "wght" 650;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
 /* ------------------------------------------------------- work-in-progress bar
  * Proving runs in-browser and takes ~10s. A button that only changes its label
  * for that long reads as a hang, so the button says how long and shows motion.
@@ -642,13 +735,7 @@ button:disabled {
 
 /* ----------------------------------------------------------------- activity */
 
-.activity-feed-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-}
-
+.card-header button,
 .activity-feed-header button {
   padding: 0.375rem 0.75rem;
   background: transparent;
@@ -690,6 +777,29 @@ button:disabled {
   text-align: right;
   font-family: var(--data);
   white-space: nowrap;
+}
+
+/* An amount in a ledger row, not a balance card: same numerals, body scale. */
+.amount-row {
+  font-size: 0.8125rem;
+  letter-spacing: -0.02em;
+}
+
+.amount-row .frac {
+  font-size: 1em;
+  color: inherit;
+}
+
+.amount-row .unit {
+  font-size: 0.7em;
+  margin-left: 0.3em;
+}
+
+/* The balance-scale blur erases 13px digits entirely, which reads as a
+   rendering bug rather than as "there is a figure here you cannot read". */
+.amount-row.sealed {
+  filter: blur(3px);
+  opacity: 0.75;
 }
 
 .activity-row-main .muted {

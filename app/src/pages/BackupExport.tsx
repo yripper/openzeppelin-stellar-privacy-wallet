@@ -1,15 +1,20 @@
 /**
- * Forced backup-export step: exports the privacy bundle (CT keys + SPP root
- * secret) as a passphrase-encrypted file, since IndexedDB doesn't survive a
- * lost device/cleared browser. The "Continue" action stays disabled until an
- * export has actually happened — this app never sees the plaintext bundle
- * leave the browser (`exportBackup` runs entirely client-side, and nothing
- * here posts anywhere).
+ * Backup export: writes the privacy bundle (CT keys + SPP root secret) out as
+ * a passphrase-encrypted file, since IndexedDB doesn't survive a lost device
+ * or cleared browser. This app never sees the plaintext bundle leave the
+ * browser — `exportBackup` runs entirely client-side and nothing here posts
+ * anywhere.
+ *
+ * Reached from `Shell`'s reminder banner. No longer a gate in the onboarding
+ * flow (see `pages/Onboarding.tsx`), so leaving is always allowed; a
+ * successful export records the fact via `markBackedUp` and that is what
+ * retires the banner.
  */
 import { useState, type FormEvent } from "react";
 import { useNavigate } from "react-router";
 
 import { exportBackup } from "../lib/backup.js";
+import { markBackedUp } from "../lib/backup-state.js";
 import { useWallet } from "../providers/WalletProvider.js";
 
 export default function BackupExport() {
@@ -55,6 +60,7 @@ export default function BackupExport() {
       anchor.remove();
       URL.revokeObjectURL(url);
       setHasExported(true);
+      markBackedUp(contractId);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -102,10 +108,10 @@ export default function BackupExport() {
       ) : null}
       <button
         type="button"
-        disabled={!hasExported}
+        className={hasExported ? undefined : "btn-ghost"}
         onClick={() => navigate("/wallet", { replace: true })}
       >
-        {hasExported ? "I've saved my backup — continue" : "Export a backup to continue"}
+        {hasExported ? "I've saved my backup — back to wallet" : "Back to wallet"}
       </button>
     </main>
   );

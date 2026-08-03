@@ -88,18 +88,20 @@ export default function SendForm() {
   }
 
   if (!rail) {
-    return (
-      <section className="send-form">
-        <p className="muted">Loading confidential wallet…</p>
-      </section>
-    );
+    return <p className="muted">Loading confidential wallet…</p>;
   }
 
   const blocked = status === "invalid" || status === "not-contract" || status === "unregistered";
 
   return (
-    <section className="send-form">
-      <h2>Send confidentially</h2>
+    <>
+      <p className="legend legend-veil">
+        <span className="dot dot-veil" />
+        <span>
+          <b>The amount is encrypted.</b> The ledger records that a transfer happened between two
+          accounts, never how much.
+        </span>
+      </p>
       <form
         className="stack"
         onSubmit={(event) => {
@@ -143,8 +145,12 @@ export default function SendForm() {
           disabled={busy}
         />
 
-        <button type="submit" disabled={busy || !recipient.trim() || !amount || blocked}>
-          {busy ? "Proving + sending…" : "Send"}
+        <button
+          type="submit"
+          className={busy ? "btn-working" : undefined}
+          disabled={busy || !recipient.trim() || !amount || blocked}
+        >
+          <span>{busy ? "Proving in your browser… about 10 seconds" : "Send"}</span>
         </button>
       </form>
       {error ? (
@@ -152,7 +158,7 @@ export default function SendForm() {
           {error}
         </p>
       ) : null}
-      {successHash ? <p className="muted">Sent (tx {truncateHash(successHash)}).</p> : null}
-    </section>
+      {successHash ? <p className="muted">Sent — tx {truncateHash(successHash)}</p> : null}
+    </>
   );
 }

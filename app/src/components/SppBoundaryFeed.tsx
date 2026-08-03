@@ -15,7 +15,8 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { listSppBoundaryEvents, type SppBoundaryEvent } from "../lib/spp-boundary-log.js";
-import { stroopsToXlm, truncateHash } from "../lib/format.js";
+import { truncateHash } from "../lib/format.js";
+import Amount from "./Amount.js";
 
 const TYPE_LABELS: Record<SppBoundaryEvent["type"], string> = {
   shield: "Shield",
@@ -61,7 +62,11 @@ export default function SppBoundaryFeed({ sessionAddress }: { sessionAddress: st
         </p>
       ) : null}
       {loading && !rows ? <p className="muted">Loading…</p> : null}
-      {rows && rows.length === 0 ? <p className="muted">No shielded boundary events yet.</p> : null}
+      {rows && rows.length === 0 ? (
+        <div className="empty">
+          <p>Nothing has crossed the public line yet. Shield some XLM and it will show up here.</p>
+        </div>
+      ) : null}
       <ul className="activity-list">
         {rows?.map((row) => (
           <li key={row.id} className="activity-row">
@@ -70,10 +75,12 @@ export default function SppBoundaryFeed({ sessionAddress }: { sessionAddress: st
               <span className="muted">{new Date(row.createdAt).toLocaleString()}</span>
             </div>
             <div className="activity-row-meta">
-              <span>
-                {row.type === "unshield" ? "-" : "+"}
-                {stroopsToXlm(BigInt(row.amount))} XLM
-              </span>
+              <span className="chip chip-exposed">on chain</span>
+              <Amount
+                stroops={row.type === "unshield" ? -BigInt(row.amount) : BigInt(row.amount)}
+                signed
+                className="amount-row"
+              />
               {row.hashes[0] ? (
                 <span className="muted" title={row.hashes[0]}>
                   {truncateHash(row.hashes[0])}

@@ -13,7 +13,8 @@ import { useCallback, useEffect, useState } from "react";
 
 import { useCt } from "../providers/CtProvider.js";
 import { API_URL, type CtRail } from "../lib/ct.js";
-import { stroopsToXlm, truncateAddress, truncateHash } from "../lib/format.js";
+import { truncateAddress, truncateHash } from "../lib/format.js";
+import Amount from "./Amount.js";
 
 export interface ActivityApiRow {
   id: string;
@@ -39,7 +40,8 @@ const TYPE_LABELS: Record<string, string> = {
 export type TransferDecryptRail = Pick<CtRail, "address" | "resolveActivityEvent" | "decryptTransferAmount">;
 
 export interface ResolvedTransfer {
-  amount: string | undefined;
+  /** Stroops, or `undefined` when the amount stays confidential to this wallet. Formatting happens at the render edge (`format.ts`'s module doc: bigint everywhere but the edges). */
+  amount: bigint | undefined;
   direction: "in" | "out" | undefined;
 }
 
@@ -61,7 +63,7 @@ export async function resolveTransferAmount(
   if (!event || event.type !== "transfer") return null;
   const direction: "in" | "out" = event.to === rail.address ? "in" : "out";
   const value = await rail.decryptTransferAmount(event);
-  return { amount: value !== null ? stroopsToXlm(value) : undefined, direction };
+  return { amount: value ?? undefined, direction };
 }
 
 export default function ActivityFeed() {
@@ -113,7 +115,14 @@ export default function ActivityFeed() {
           {error}
         </p>
       ) : null}
-      {rows && rows.length === 0 ? <p className="muted">No activity yet.</p> : null}
+      {rows && rows.length === 0 ? (
+        <div className="empty">
+          <p>
+            Nothing here yet. Deposit XLM into your confidential balance and the first entry will
+            appear — with the deposit amount public, and every transfer after it encrypted.
+          </p>
+        </div>
+      ) : null}
       <ul className="activity-list">
         {rows?.map((row) => (
           <ActivityRow key={row.id} row={row} rail={rail} />
@@ -124,8 +133,8 @@ export default function ActivityFeed() {
 }
 
 function ActivityRow({ row, rail }: { row: ActivityApiRow; rail: CtRail }) {
-  const publicAmount = row.amount !== null ? stroopsToXlm(BigInt(row.amount)) : undefined;
-  const [amount, setAmount] = useState<string | undefined>(publicAmount);
+  const publicAmount = row.amount !== null ? BigInt(row.amount) : undefined;
+  const [amount, setAmount] = useState<bigint | undefined>(publicAmount);
   const [direction, setDirection] = useState<"in" | "out" | undefined>(undefined);
   const [decrypting, setDecrypting] = useState(row.type === "transfer");
   const [decryptError, setDecryptError] = useState(false);
@@ -160,8 +169,10 @@ function ActivityRow({ row, rail }: { row: ActivityApiRow; rail: CtRail }) {
     };
   }, [row, rail, attempt]);
 
-  const sign = direction === "out" ? "-" : direction === "in" ? "+" : "";
-  const amountLabel = decrypting ? "Decrypting…" : amount !== undefined ? `${sign}${amount} XLM` : "Private";
+  // `transfer` is the only CT op whose amount the ledger never learns; every
+  // other row's amount is plaintext on chain by construction.
+  const isPrivate = row.type === "transfer";
+  const signedAmount = direction === "out" && amount !== undefined ? -amount : amount;
 
   return (
     <li className="activity-row">
@@ -172,12 +183,30 @@ function ActivityRow({ row, rail }: { row: ActivityApiRow; rail: CtRail }) {
         </span>
       </div>
       <div className="activity-row-meta">
+        <span className={isPrivate ? "chip chip-veil" : "chip chip-exposed"}>
+          {isPrivate ? "encrypted" : "on chain"}
+        </span>
         {decryptError ? (
           <button type="button" className="retry-inline" onClick={() => setAttempt((a) => a + 1)}>
             Amount unavailable — retry
           </button>
+        ) : decrypting ? (
+          <span className="muted">Decrypting…</span>
+        ) : signedAmount !== undefined ? (
+          <Amount
+            stroops={signedAmount}
+            signed={direction !== undefined}
+            reveal={isPrivate ? "decrypted" : "plain"}
+            className="amount-row"
+          />
         ) : (
-          <span>{amountLabel}</span>
+          // Not a placeholder: this wallet holds neither the viewing key nor
+          // the sender's ephemeral scalar for this transfer, so the amount is
+          // permanently unreadable here. Showing a blurred figure states that
+          // more honestly than the word "Private" in grey.
+          <span className="amount amount-row sealed" title="This transfer's amount is not readable by this wallet">
+            0.0000000
+          </span>
         )}
         <span className="muted" title={row.txHash}>
           {truncateHash(row.txHash)}

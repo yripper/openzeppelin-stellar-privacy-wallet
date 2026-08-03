@@ -65,7 +65,7 @@ describe("resolveTransferAmount", () => {
       resolveActivityEvent: async () => event,
       decryptTransferAmount: async () => 40_0000000n,
     });
-    await expect(resolveTransferAmount(ROW, rail)).resolves.toEqual({ amount: "40", direction: "in" });
+    await expect(resolveTransferAmount(ROW, rail)).resolves.toEqual({ amount: 40_0000000n, direction: "in" });
   });
 
   it("resolves an outbound transfer (from === me) with a negative direction", async () => {
@@ -74,7 +74,7 @@ describe("resolveTransferAmount", () => {
       resolveActivityEvent: async () => event,
       decryptTransferAmount: async () => 40_0000000n,
     });
-    await expect(resolveTransferAmount(ROW, rail)).resolves.toEqual({ amount: "40", direction: "out" });
+    await expect(resolveTransferAmount(ROW, rail)).resolves.toEqual({ amount: 40_0000000n, direction: "out" });
   });
 
   it("resolves null when the on-chain event can't be matched (not an error)", async () => {

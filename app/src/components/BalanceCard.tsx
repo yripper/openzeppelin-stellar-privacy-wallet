@@ -1,23 +1,32 @@
 /**
- * Confidential balance card: public XLM (SAC `balance` simulation) +
- * decrypted spendable/receiving (StateEngine), the on-chain verification
- * status, and the register/deposit/merge/withdraw quick actions —
- * `ct.ts`'s five orchestrator methods minus `transfer` (that one lives in
- * `SendForm.tsx`).
+ * Confidential balances: public XLM (SAC `balance` simulation) beside the
+ * decrypted spendable balance (StateEngine), plus the two state-changing
+ * actions that belong to the balance itself rather than to moving money —
+ * `register` (first-time activation) and `merge` (receiving -> spendable).
+ *
+ * Deposit and withdraw used to live here too; they now sit in the segmented
+ * action panel (`MoveFunds.tsx`, switched by `pages/Confidential.tsx`)
+ * alongside send, because they are all the same kind of thing — moving an
+ * amount across a boundary — and stacking every form at once was most of why
+ * this page read as a form dump.
+ *
+ * The receiving balance is rendered as a prompt with the merge button
+ * attached, not as a number the user is expected to notice. A deposit lands in
+ * receiving and is NOT spendable until merged, which is the single most
+ * confusing thing about the CT rail: "I deposited, why can't I send?"
  */
-import { useState, type FormEvent } from "react";
+import { useState } from "react";
 
 import { useCt } from "../providers/CtProvider.js";
-import { stroopsToXlm, xlmToStroops } from "../lib/format.js";
+import { stroopsToXlm } from "../lib/format.js";
+import Amount from "./Amount.js";
 
-type Action = "register" | "deposit" | "merge" | "withdraw";
+type Action = "register" | "merge";
 
 export default function BalanceCard() {
   const { rail, view, loading, error, refresh } = useCt();
   const [busy, setBusy] = useState<Action | undefined>(undefined);
   const [actionError, setActionError] = useState<string | undefined>(undefined);
-  const [depositAmount, setDepositAmount] = useState("");
-  const [withdrawAmount, setWithdrawAmount] = useState("");
 
   async function run(action: Action, fn: () => Promise<unknown>): Promise<void> {
     setBusy(action);
@@ -42,8 +51,14 @@ export default function BalanceCard() {
 
   return (
     <section className="balance-card">
-      <h2>Confidential balance</h2>
-      {loading && !view ? <p className="muted">Syncing…</p> : null}
+      <div className="card-header">
+        <h2>Balances</h2>
+        <button type="button" className="btn-ghost btn-small" disabled={loading} onClick={() => void refresh()}>
+          {loading ? "Reading…" : "Refresh"}
+        </button>
+      </div>
+
+      {loading && !view ? <p className="muted">Reading your balances…</p> : null}
       {error ? (
         <p role="alert" className="error">
           {error}
@@ -51,22 +66,37 @@ export default function BalanceCard() {
       ) : null}
 
       {view ? (
-        <dl className="details">
-          <dt>Public XLM</dt>
-          <dd>{stroopsToXlm(view.publicXlm)} XLM</dd>
-          <dt>Spendable</dt>
-          <dd>{stroopsToXlm(view.spendable)} XLM</dd>
-          <dt>Receiving</dt>
-          <dd>{stroopsToXlm(view.receiving)} XLM</dd>
-          <dt>Status</dt>
-          <dd>
-            {!view.registered
-              ? "Not activated"
-              : view.matchesChain
-                ? "Activated · verified against chain"
-                : "Activated · verifying…"}
-          </dd>
-        </dl>
+        <>
+          <div className="cells">
+            <div className="cell">
+              <div className="cell-label">
+                <span className="dot dot-exposed" /> Public
+              </div>
+              <Amount stroops={view.publicXlm} />
+              <p className="cell-note">Printed on the ledger. Anyone can read it.</p>
+            </div>
+
+            <div className="cell redacted">
+              <div className="cell-label">
+                <span className="dot dot-veil" /> Confidential · spendable
+              </div>
+              <Amount stroops={view.spendable} reveal={view.registered ? "decrypted" : "plain"} />
+              <p className="cell-note">
+                {view.registered
+                  ? "Decrypted here, with your viewing key."
+                  : "Not activated yet."}
+              </p>
+            </div>
+          </div>
+
+          {view.registered ? (
+            <p className="muted card-status">
+              {view.matchesChain
+                ? "Verified against the on-chain commitment."
+                : "Verifying against the on-chain commitment…"}
+            </p>
+          ) : null}
+        </>
       ) : null}
 
       {actionError ? (
@@ -78,80 +108,33 @@ export default function BalanceCard() {
       {!view?.registered ? (
         <button
           type="button"
+          className={busy === "register" ? "btn-working" : undefined}
           disabled={busy !== undefined}
-          onClick={() => run("register", () => rail.register())}
+          onClick={() => void run("register", () => rail.register())}
         >
-          {busy === "register" ? "Proving + activating…" : "Activate confidential balance"}
+          <span>
+            {busy === "register"
+              ? "Proving in your browser… about 10 seconds"
+              : "Activate confidential balance"}
+          </span>
         </button>
-      ) : (
-        <div className="stack">
-          <form
-            className="stack"
-            onSubmit={(event: FormEvent) => {
-              event.preventDefault();
-              let stroops: bigint;
-              try {
-                stroops = xlmToStroops(depositAmount);
-              } catch (err) {
-                setActionError(err instanceof Error ? err.message : String(err));
-                return;
-              }
-              void run("deposit", () => rail.deposit(stroops)).then(() => setDepositAmount(""));
-            }}
-          >
-            <label htmlFor="depositAmount">Deposit public XLM into confidential balance</label>
-            <input
-              id="depositAmount"
-              inputMode="decimal"
-              placeholder="0.0000000"
-              value={depositAmount}
-              onChange={(event) => setDepositAmount(event.target.value)}
-              disabled={busy !== undefined}
-            />
-            <button type="submit" disabled={busy !== undefined || !depositAmount}>
-              {busy === "deposit" ? "Depositing…" : "Deposit"}
-            </button>
-          </form>
+      ) : null}
 
-          {view && view.receiving > 0n ? (
-            <button
-              type="button"
-              disabled={busy !== undefined}
-              onClick={() => run("merge", () => rail.merge())}
-            >
-              {busy === "merge" ? "Merging…" : "Merge receiving into spendable"}
-            </button>
-          ) : null}
-
-          <form
-            className="stack"
-            onSubmit={(event: FormEvent) => {
-              event.preventDefault();
-              let stroops: bigint;
-              try {
-                stroops = xlmToStroops(withdrawAmount);
-              } catch (err) {
-                setActionError(err instanceof Error ? err.message : String(err));
-                return;
-              }
-              void run("withdraw", () => rail.withdraw(stroops)).then(() => setWithdrawAmount(""));
-            }}
-          >
-            <label htmlFor="withdrawAmount">Withdraw confidential balance to public XLM</label>
-            <input
-              id="withdrawAmount"
-              inputMode="decimal"
-              placeholder="0.0000000"
-              value={withdrawAmount}
-              onChange={(event) => setWithdrawAmount(event.target.value)}
-              disabled={busy !== undefined}
-            />
-            <button type="submit" disabled={busy !== undefined || !withdrawAmount}>
-              {busy === "withdraw" ? "Proving + withdrawing…" : "Withdraw"}
-            </button>
-          </form>
+      {view && view.receiving > 0n ? (
+        <div className="callout">
+          <div className="callout-body">
+            {/* Plain text, not <Amount>: the hero treatment's block layout and
+                shrunken fraction fight a sentence. */}
+            <strong>{stroopsToXlm(view.receiving)} XLM arrived</strong>
+            <span>
+              Deposits land in a receiving bucket. Move them to spendable before you can send.
+            </span>
+          </div>
+          <button type="button" disabled={busy !== undefined} onClick={() => void run("merge", () => rail.merge())}>
+            {busy === "merge" ? "Moving…" : "Move to spendable"}
+          </button>
         </div>
-      )}
+      ) : null}
     </section>
   );
 }

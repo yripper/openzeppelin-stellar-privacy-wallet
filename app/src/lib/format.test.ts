@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { stroopsToXlm, truncateAddress, truncateHash, xlmToStroops } from "./format.js";
+import { splitStroops, stroopsToXlm, truncateAddress, truncateHash, xlmToStroops } from "./format.js";
 
 describe("stroopsToXlm", () => {
   it("renders a whole XLM amount with no fractional part", () => {
@@ -75,5 +75,32 @@ describe("truncateHash", () => {
 
   it("leaves a short string untouched", () => {
     expect(truncateHash("shorthash")).toBe("shorthash");
+  });
+});
+
+describe("splitStroops", () => {
+  it("keeps all 7 fractional digits, unlike stroopsToXlm's trimming", () => {
+    expect(splitStroops(50_0000000n)).toEqual({ sign: "", whole: "50", frac: "0000000" });
+    expect(stroopsToXlm(50_0000000n)).toBe("50");
+  });
+
+  it("groups the whole part in threes", () => {
+    expect(splitStroops(1_234_567_0000000n).whole).toBe("1,234,567");
+  });
+
+  it("leaves a 3-digit whole part ungrouped", () => {
+    expect(splitStroops(999_0000000n).whole).toBe("999");
+  });
+
+  it("pads a small fraction to 7 digits rather than dropping leading zeros", () => {
+    expect(splitStroops(1n)).toEqual({ sign: "", whole: "0", frac: "0000001" });
+  });
+
+  it("separates the sign from the figure", () => {
+    expect(splitStroops(-12_5000000n)).toEqual({ sign: "-", whole: "12", frac: "5000000" });
+  });
+
+  it("renders zero", () => {
+    expect(splitStroops(0n)).toEqual({ sign: "", whole: "0", frac: "0000000" });
   });
 });

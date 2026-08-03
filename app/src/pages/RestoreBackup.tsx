@@ -12,6 +12,7 @@ import { useState, type ChangeEvent, type FormEvent } from "react";
 import { useLocation, useNavigate } from "react-router";
 
 import { importBackup } from "../lib/backup.js";
+import { markBackedUp } from "../lib/backup-state.js";
 import { pairImportedBundle, saveBundle } from "../lib/privacy-bundle.js";
 import { useWallet } from "../providers/WalletProvider.js";
 
@@ -48,6 +49,9 @@ export default function RestoreBackup() {
       const imported = await importBackup(file, passphrase);
       const paired = pairImportedBundle(imported, contractId);
       await saveBundle(paired);
+      // Restoring proves a backup file exists and its passphrase is known —
+      // exactly what Shell's reminder banner asks for, so don't nag.
+      markBackedUp(contractId);
       await refreshBundle();
       navigate("/wallet", { replace: true });
     } catch (err) {

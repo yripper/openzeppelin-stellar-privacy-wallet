@@ -17,6 +17,7 @@ import { StrKey } from "@stellar/stellar-sdk";
 import { TESTNET } from "@privacy-wallet/shared";
 
 import { useWallet } from "../providers/WalletProvider.js";
+import Amount from "../components/Amount.js";
 import { stroopsToXlm, truncateAddress, truncateHash, xlmToStroops } from "../lib/format.js";
 import { humanizeRelayerError } from "../lib/relayer-errors.js";
 import { recordSppBoundaryEvent } from "../lib/spp-boundary-log.js";
@@ -237,6 +238,9 @@ export function connectReducer(state: ConnectState, event: ConnectEvent): Connec
   }
 }
 
+const SPP_PANELS = ["Add funds", "Send", "Withdraw"] as const;
+type SppPanel = (typeof SPP_PANELS)[number];
+
 export default function Shielded() {
   const { contractId, bundle } = useWallet();
 
@@ -257,6 +261,8 @@ export default function Shielded() {
   const [unshieldAmount, setUnshieldAmount] = useState("");
   const [recipient, setRecipient] = useState("");
   const [recipientStatus, setRecipientStatus] = useState<RecipientStatus>({ kind: "idle" });
+  /** Which of the three mutually-exclusive action panels is open — same segmented pattern as the CT rail (`pages/Confidential.tsx`). */
+  const [panel, setPanel] = useState<SppPanel>("Send");
 
   // The SDK reports prove/simulate/sign/submit progress as a window
   // CustomEvent (`execute/progress.rs`) — the only feedback available during a
@@ -462,21 +468,42 @@ export default function Shielded() {
         </details>
 
         {view ? (
-          <dl className="details">
-            <dt>Shielded</dt>
-            <dd>
-              {stroopsToXlm(view.shielded)} XLM
-              {view.shielded === view.portfolioShielded ? "" : " ⚠︎ portfolio mismatch"}
-            </dd>
-            <dt>Unspent notes</dt>
-            <dd>{view.unspentNotes}</dd>
-            <dt>Session balance</dt>
-            <dd>
-              {view.sessionExists ? `${stroopsToXlm(view.sessionXlm)} XLM` : "not created yet"}
-            </dd>
-            <dt>Receiving</dt>
-            <dd>{view.registered ? "enabled" : "not enabled"}</dd>
-          </dl>
+          <>
+            <div className="cells">
+              <div className="cell redacted">
+                <div className="cell-label">
+                  <span className="dot dot-veil" /> In the pool
+                </div>
+                <Amount stroops={view.shielded} reveal="decrypted" />
+                <p className="cell-note">
+                  Held as {view.unspentNotes} unspent {view.unspentNotes === 1 ? "note" : "notes"}.
+                  No account of yours holds this on chain.
+                  {view.shielded === view.portfolioShielded ? "" : " ⚠︎ portfolio mismatch"}
+                </p>
+              </div>
+
+              <div className="cell">
+                <div className="cell-label">
+                  <span className="dot dot-exposed" /> Shielded signer
+                </div>
+                {view.sessionExists ? (
+                  <Amount stroops={view.sessionXlm} />
+                ) : (
+                  <span className="amount">—</span>
+                )}
+                <p className="cell-note">
+                  {view.sessionExists
+                    ? "A public funding account the pool signs from."
+                    : "Not created yet — add funds to open it."}
+                </p>
+              </div>
+            </div>
+            <p className="muted card-status">
+              {view.registered
+                ? "Others can send you shielded payments."
+                : "Others cannot send to you yet — enable receiving under Send."}
+            </p>
+          </>
         ) : (
           <p className="muted">{refreshing ? "Reading shielded state…" : "No state yet."}</p>
         )}
@@ -505,9 +532,31 @@ export default function Shielded() {
       </section>
 
       <section className="send-form">
-        <h2>Add funds</h2>
+        <div className="seg" role="group" aria-label="Shielded pool actions">
+          {SPP_PANELS.map((name) => (
+            <button
+              key={name}
+              type="button"
+              aria-pressed={name === panel}
+              onClick={() => setPanel(name)}
+            >
+              {name}
+            </button>
+          ))}
+        </div>
 
-        {view && !view.sessionExists ? (
+        {panel === "Add funds" ? (
+          <>
+            <p className="legend legend-exposed">
+              <span className="dot dot-exposed" />
+              <span>
+                <b>Both of these steps are public.</b> Moving XLM to the signer is an ordinary
+                payment, and shielding it into the pool publishes an opaque commitment — what stays
+                private is everything you do inside the pool afterwards.
+              </span>
+            </p>
+
+            {view && !view.sessionExists ? (
           <button
             type="button"
             disabled={disabled}
@@ -585,16 +634,31 @@ export default function Shielded() {
             onChange={(event) => setShieldAmount(event.target.value)}
             disabled={disabled}
           />
-          <button type="submit" disabled={disabled || !shieldAmount}>
-            {busy === "shield" ? "Proving + shielding…" : "Shield"}
+          <button
+            type="submit"
+            className={busy === "shield" ? "btn-working" : undefined}
+            disabled={disabled || !shieldAmount}
+          >
+            <span>
+              {busy === "shield" ? "Proving in your browser… about 10 seconds" : "Shield"}
+            </span>
           </button>
-        </form>
-      </section>
+            </form>
+          </>
+        ) : null}
 
-      <section className="send-form">
-        <h2>Send shielded</h2>
+        {panel === "Send" ? (
+          <>
+            <p className="legend legend-veil">
+              <span className="dot dot-veil" />
+              <span>
+                <b>Nothing about this payment is recorded.</b> Not the amount, not the recipient,
+                not that you were involved — the pool publishes only an opaque commitment and a
+                nullifier.
+              </span>
+            </p>
 
-        {view && !view.registered ? (
+            {view && !view.registered ? (
           <div className="stack">
             <p className="muted">
               Publish this wallet&apos;s shielded keys so other people can send to you. Not needed to
@@ -678,16 +742,30 @@ export default function Shielded() {
             onChange={(event) => setSendAmount(event.target.value)}
             disabled={disabled}
           />
-          <button type="submit" disabled={disabled || !sendAmount || !canSend}>
-            {busy === "send" ? "Proving + sending…" : "Send shielded"}
+          <button
+            type="submit"
+            className={busy === "send" ? "btn-working" : undefined}
+            disabled={disabled || !sendAmount || !canSend}
+          >
+            <span>
+              {busy === "send" ? "Proving in your browser… about 10 seconds" : "Send shielded"}
+            </span>
           </button>
-        </form>
-      </section>
+            </form>
+          </>
+        ) : null}
 
-      <section className="send-form">
-        <h2>Take funds out</h2>
+        {panel === "Withdraw" ? (
+          <>
+            <p className="legend legend-exposed">
+              <span className="dot dot-exposed" />
+              <span>
+                <b>This amount is published on chain.</b> Taking money out of the pool is the same
+                public boundary a shield is, in reverse.
+              </span>
+            </p>
 
-        <form
+            <form
           className="stack"
           onSubmit={(event: FormEvent) => {
             event.preventDefault();
@@ -717,12 +795,18 @@ export default function Shielded() {
             onChange={(event) => setUnshieldAmount(event.target.value)}
             disabled={disabled}
           />
-          <button type="submit" disabled={disabled || !unshieldAmount}>
-            {busy === "unshield" ? "Proving + unshielding…" : "Unshield"}
+          <button
+            type="submit"
+            className={busy === "unshield" ? "btn-working" : undefined}
+            disabled={disabled || !unshieldAmount}
+          >
+            <span>
+              {busy === "unshield" ? "Proving in your browser… about 10 seconds" : "Unshield"}
+            </span>
           </button>
-        </form>
+            </form>
 
-        <button
+            <button
           type="button"
           className="btn-ghost"
           disabled={disabled}
@@ -740,8 +824,10 @@ export default function Shielded() {
             })
           }
         >
-          {busy === "sweep" ? "Returning…" : "Return session XLM to wallet"}
-        </button>
+              {busy === "sweep" ? "Returning…" : "Return session XLM to wallet"}
+            </button>
+          </>
+        ) : null}
       </section>
     </div>
   );

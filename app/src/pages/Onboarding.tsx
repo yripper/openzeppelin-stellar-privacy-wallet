@@ -1,8 +1,13 @@
 /**
  * First-time-user flow: passkey-create a smart account, fund it via
- * friendbot, mint the privacy bundle, then hand off to the forced
- * backup-export step (BackupExport.tsx) — the user cannot reach the wallet
- * home before exporting at least once.
+ * friendbot, mint the privacy bundle, then go straight to the wallet.
+ *
+ * The backup export is NOT a gate here any more. It used to be — this page
+ * navigated to `/backup-export`, which held "Continue" disabled until a file
+ * had been downloaded — but a hard stop on a throwaway testnet wallet, in
+ * front of the very first thing a new user sees, costs more than it protects.
+ * The reminder now lives in `Shell`'s banner and persists until an export
+ * actually happens (see `lib/backup-state.ts`).
  */
 import { useState, type FormEvent } from "react";
 import { useNavigate } from "react-router";
@@ -23,7 +28,7 @@ export default function Onboarding() {
     setError(undefined);
     try {
       await createWallet(userName.trim());
-      navigate("/backup-export", { replace: true });
+      navigate("/wallet", { replace: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {

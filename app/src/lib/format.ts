@@ -31,6 +31,36 @@ export function xlmToStroops(input: string): bigint {
   return BigInt(whole!) * STROOPS_PER_XLM + BigInt(frac.padEnd(7, "0"));
 }
 
+export interface AmountParts {
+  /** `"-"` or `""` — never bundled into `whole`, so the sign can be styled apart from the figure. */
+  sign: string;
+  /** Whole lumens, grouped in threes with `,`. */
+  whole: string;
+  /** Exactly 7 digits, never trimmed. */
+  frac: string;
+}
+
+/**
+ * Split stroops for the display treatment `<Amount>` renders: a large whole
+ * figure, a de-emphasised fraction, and a separate sign.
+ *
+ * Unlike {@link stroopsToXlm} this does NOT trim trailing zeros — a balance
+ * card is a ledger reading, where `50.0000000` and `50` claim different
+ * precision, and a column of amounts whose decimal points don't line up is
+ * unreadable. Grouping is hard-coded to `,` rather than locale-derived so the
+ * same balance renders identically for every user (and in tests).
+ */
+export function splitStroops(stroops: bigint): AmountParts {
+  const negative = stroops < 0n;
+  const abs = negative ? -stroops : stroops;
+  const whole = (abs / STROOPS_PER_XLM).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  return {
+    sign: negative ? "-" : "",
+    whole,
+    frac: (abs % STROOPS_PER_XLM).toString().padStart(7, "0"),
+  };
+}
+
 /** `GABC…XYZ` — first 6 + last 6 characters, for compact display. */
 export function truncateAddress(address: string): string {
   if (address.length <= 16) return address;
