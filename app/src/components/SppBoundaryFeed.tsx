@@ -15,8 +15,8 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { listSppBoundaryEvents, type SppBoundaryEvent } from "../lib/spp-boundary-log.js";
-import { truncateHash } from "../lib/format.js";
 import Amount from "./Amount.js";
+import TxLink from "./TxLink.js";
 
 const TYPE_LABELS: Record<SppBoundaryEvent["type"], string> = {
   shield: "Shield",
@@ -81,11 +81,7 @@ export default function SppBoundaryFeed({ sessionAddress }: { sessionAddress: st
                 signed
                 className="amount-row"
               />
-              {row.hashes[0] ? (
-                <span className="muted" title={row.hashes[0]}>
-                  {truncateHash(row.hashes[0])}
-                </span>
-              ) : null}
+              {row.hashes[0] ? <TxLink hash={row.hashes[0]} className="muted" /> : null}
             </div>
           </li>
         ))}

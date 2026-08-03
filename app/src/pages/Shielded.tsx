@@ -18,7 +18,8 @@ import { TESTNET } from "@privacy-wallet/shared";
 
 import { useWallet } from "../providers/WalletProvider.js";
 import Amount from "../components/Amount.js";
-import { stroopsToXlm, truncateAddress, truncateHash, xlmToStroops } from "../lib/format.js";
+import TxLink from "../components/TxLink.js";
+import { stroopsToXlm, truncateAddress, xlmToStroops } from "../lib/format.js";
 import { humanizeRelayerError } from "../lib/relayer-errors.js";
 import { recordSppBoundaryEvent } from "../lib/spp-boundary-log.js";
 import {
@@ -47,7 +48,8 @@ const ACTION_LABELS: Record<Action, string> = {
   register: "Enabling receiving",
 };
 
-type Notice = { kind: "ok" | "warn" | "error"; text: string };
+/** `hashes` are rendered after `text` as stellar.expert links (`TxLink`), so the copy should not also spell them out inline. */
+type Notice = { kind: "ok" | "warn" | "error"; text: string; hashes?: string[] };
 
 type RecipientStatus =
   | { kind: "idle" }
@@ -138,18 +140,19 @@ export function describeResult(result: SppExecuteResult, label: string): Notice 
       return { kind: "warn", text: `${label} was canceled before it could be signed.` };
     }
     const submitted = result.hashes.length
-      ? ` (${result.hashes.length} transaction(s) already submitted: ${result.hashes
-          .map(truncateHash)
-          .join(", ")})`
+      ? ` — ${result.hashes.length} transaction(s) already submitted:`
       : "";
-    return { kind: "error", text: `${label} failed: ${humanizeSppError(result.message)}${submitted}` };
+    return {
+      kind: "error",
+      text: `${label} failed: ${humanizeSppError(result.message)}${submitted}`,
+      hashes: result.hashes,
+    };
   }
   const last = result.hashes[result.hashes.length - 1];
   return {
     kind: "ok",
-    text: `${label} confirmed in ${result.hashes.length} transaction(s)${
-      last ? ` — ${truncateHash(last)}` : ""
-    }.`,
+    text: `${label} confirmed in ${result.hashes.length} transaction(s)${last ? " —" : "."}`,
+    hashes: last ? [last] : undefined,
   };
 }
 
@@ -522,6 +525,11 @@ export default function Shielded() {
         {notice ? (
           <p role="alert" className={notice.kind === "error" ? "error" : "muted"}>
             {notice.text}
+            {notice.hashes?.map((hash, index) => (
+              <span key={hash}>
+                {index > 0 ? "," : ""} <TxLink hash={hash} />
+              </span>
+            ))}
           </p>
         ) : null}
         {staleWarning ? (
@@ -584,7 +592,8 @@ export default function Shielded() {
               setFundAmount("");
               return {
                 kind: "ok",
-                text: `Moved ${stroopsToXlm(stroops)} XLM to the shielded signer — ${truncateHash(hash)}.`,
+                text: `Moved ${stroopsToXlm(stroops)} XLM to the shielded signer —`,
+                hashes: [hash],
               };
             });
           }}
@@ -672,7 +681,7 @@ export default function Shielded() {
               onClick={() =>
                 void run("register", async () => {
                   const hash = await rail.registerPublicKeys();
-                  return { kind: "ok", text: `Receiving enabled — ${truncateHash(hash)}.` };
+                  return { kind: "ok", text: "Receiving enabled —", hashes: [hash] };
                 })
               }
             >
@@ -820,7 +829,8 @@ export default function Shielded() {
                     kind: "ok",
                     text: `Returned ${stroopsToXlm(swept.amount)} XLM to ${truncateAddress(
                       rail.walletAddress
-                    )} — ${truncateHash(swept.hash)}.`,
+                    )} —`,
+                    hashes: [swept.hash],
                   }
                 : { kind: "warn", text: "Nothing above the session account's reserve to return." };
             })

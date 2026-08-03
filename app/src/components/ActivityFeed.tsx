@@ -13,8 +13,9 @@ import { useCallback, useEffect, useState } from "react";
 
 import { useCt } from "../providers/CtProvider.js";
 import { API_URL, type CtRail } from "../lib/ct.js";
-import { truncateAddress, truncateHash } from "../lib/format.js";
+import { truncateAddress } from "../lib/format.js";
 import Amount from "./Amount.js";
+import TxLink from "./TxLink.js";
 
 export interface ActivityApiRow {
   id: string;
@@ -208,9 +209,7 @@ function ActivityRow({ row, rail }: { row: ActivityApiRow; rail: CtRail }) {
             0.0000000
           </span>
         )}
-        <span className="muted" title={row.txHash}>
-          {truncateHash(row.txHash)}
-        </span>
+        <TxLink hash={row.txHash} className="muted" />
       </div>
     </li>
   );

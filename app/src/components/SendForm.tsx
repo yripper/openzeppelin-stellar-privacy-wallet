@@ -10,7 +10,8 @@ import { useState, type FormEvent } from "react";
 import { StrKey } from "@stellar/stellar-sdk";
 
 import { useCt } from "../providers/CtProvider.js";
-import { truncateHash, xlmToStroops } from "../lib/format.js";
+import { xlmToStroops } from "../lib/format.js";
+import TxLink from "./TxLink.js";
 
 type RecipientStatus =
   | "idle"
@@ -158,7 +159,11 @@ export default function SendForm() {
           {error}
         </p>
       ) : null}
-      {successHash ? <p className="muted">Sent — tx {truncateHash(successHash)}</p> : null}
+      {successHash ? (
+        <p className="muted">
+          Sent — <TxLink hash={successHash} />
+        </p>
+      ) : null}
     </>
   );
 }

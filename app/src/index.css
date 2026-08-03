@@ -779,6 +779,24 @@ button:disabled {
   white-space: nowrap;
 }
 
+/* Transaction hashes link to stellar.expert. A dotted underline rather than a
+   solid one: in a ledger every row carries a hash, so a column of solid rules
+   reads as noise — but with no mark at all nobody discovers they're clickable,
+   which is the whole point (go check the claim on a block explorer). */
+.tx-link {
+  font-family: var(--data);
+  color: var(--ink-soft);
+  text-decoration: underline dotted;
+  text-decoration-color: var(--rule);
+  text-underline-offset: 0.25em;
+}
+
+.tx-link:hover,
+.tx-link:focus-visible {
+  color: var(--ink);
+  text-decoration: underline solid;
+}
+
 /* An amount in a ledger row, not a balance card: same numerals, body scale. */
 .amount-row {
   font-size: 0.8125rem;
