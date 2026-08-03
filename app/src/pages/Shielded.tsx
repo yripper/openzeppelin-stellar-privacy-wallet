@@ -496,6 +496,7 @@ export default function Shielded() {
 
         <button
           type="button"
+          className="btn-ghost"
           onClick={() => void refreshAndReport()}
           disabled={refreshing || disabled}
         >
@@ -723,6 +724,7 @@ export default function Shielded() {
 
         <button
           type="button"
+          className="btn-ghost"
           disabled={disabled}
           onClick={() =>
             void run("sweep", async () => {

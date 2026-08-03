@@ -1,25 +1,50 @@
-:root {
-  color-scheme: light dark;
-  font-family:
-    system-ui,
-    -apple-system,
-    "Segoe UI",
-    Roboto,
-    sans-serif;
-  --fg: #1a1a1a;
-  --bg: #ffffff;
-  --muted: #6b7280;
-  --border: #d1d5db;
-  --accent: #2563eb;
-}
+/* ============================================================================
+ * Privacy Wallet design system.
+ *
+ * ONE GROUND: greenbar accounting paper. Light only — there is deliberately no
+ * `prefers-color-scheme: dark` block and `color-scheme` is pinned to `light`,
+ * because black is a SEMANTIC element here, not a theme. The rule the whole
+ * interface is built on:
+ *
+ *     printed on the paper  ->  public, on the ledger, anyone can read it
+ *     inside a black block  ->  redacted, off the record
+ *
+ * so a dark chrome would make "private" unreadable as a signal. `.redacted`
+ * (below) is the block; it is the only place near-black backgrounds appear.
+ *
+ * Colour is a legend rather than decoration, and both accents carry meaning
+ * the user is expected to learn:
+ *
+ *     --exposed (brass)  ->  this amount is published on chain
+ *     --veil (iris)      ->  only you can read this
+ *
+ * Keep that mapping intact when adding UI: an iris accent on something
+ * publicly visible is a factual error, not a style choice.
+ * ========================================================================= */
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --fg: #f3f4f6;
-    --bg: #111827;
-    --muted: #9ca3af;
-    --border: #374151;
-  }
+:root {
+  /* Pinned: see module doc above — "light mode" is load-bearing, not a default. */
+  color-scheme: light;
+
+  --paper: #dee6d4; /* greenbar ledger stock — the page */
+  --paper-alt: #cfdbbb; /* the printed stripe on enumerable rows */
+  --card: #f1f5ea; /* a fresh sheet — raised surfaces, inputs */
+  --ink: #14180e; /* press black, warm */
+  --ink-soft: #55603f;
+  --rule: #b4c09e;
+
+  --veil: #4033cf; /* private — only you can read this */
+  --veil-wash: #dddaf7;
+  --exposed: #7d5115; /* published on chain */
+  --exposed-wash: #e9dcc1;
+  --alert: #92291c;
+
+  --display:
+    "Archivo Variable", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --data: "Martian Mono Variable", ui-monospace, SFMono-Regular, monospace;
+
+  --radius: 2px;
+  --focus: 2px solid var(--veil);
 }
 
 * {
@@ -28,14 +53,71 @@
 
 body {
   margin: 0;
-  color: var(--fg);
-  background: var(--bg);
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--display);
+  font-variation-settings: "wdth" 100;
+  font-size: 1rem;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
 }
 
+/* Every interactive element gets a visible focus ring — the accent doubles as
+   the "private" colour, which is also the most legible thing on this paper. */
+:where(a, button, input, summary, [tabindex]):focus-visible {
+  outline: var(--focus);
+  outline-offset: 2px;
+  border-radius: var(--radius);
+}
+
+/* ---------------------------------------------------------------- typography */
+
+h1,
+h2,
+h3 {
+  font-variation-settings: "wdth" 112, "wght" 700;
+  letter-spacing: -0.025em;
+  line-height: 1.1;
+  margin: 0 0 0.75rem;
+}
+
+h1 {
+  font-size: clamp(1.75rem, 5vw, 2.25rem);
+}
+
+h2 {
+  font-size: 1rem;
+  font-variation-settings: "wdth" 108, "wght" 650;
+}
+
+h3 {
+  font-size: 0.875rem;
+}
+
+p {
+  margin: 0 0 1rem;
+  max-width: 62ch;
+}
+
+/* Links are ink, NOT iris. Iris means "only you can read this" everywhere else
+   in this interface; spending it on ordinary navigation would teach the user
+   that the colour means nothing. */
+a {
+  color: var(--ink);
+  text-underline-offset: 0.15em;
+  text-decoration-thickness: 1px;
+}
+
+code {
+  font-family: var(--data);
+}
+
+/* ------------------------------------------------------------------- layout */
+
 .screen {
-  max-width: 28rem;
-  margin: 3rem auto;
-  padding: 0 1.5rem;
+  max-width: 40rem;
+  margin: 2.5rem auto;
+  padding: 0 1.25rem;
 }
 
 .stack {
@@ -45,205 +127,638 @@ body {
   margin-top: 1rem;
 }
 
-label {
-  font-size: 0.875rem;
-  font-weight: 600;
-}
-
-input {
-  padding: 0.5rem 0.75rem;
-  border: 1px solid var(--border);
-  border-radius: 0.375rem;
-  background: var(--bg);
-  color: var(--fg);
-  font-size: 1rem;
-}
-
-button {
-  padding: 0.625rem 1rem;
-  border: 1px solid var(--accent);
-  border-radius: 0.375rem;
-  background: var(--accent);
-  color: white;
-  font-size: 1rem;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-button:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-button[type="button"]:not(.tab) {
-  background: transparent;
-  color: var(--accent);
-}
-
-.error {
-  color: #dc2626;
-}
-
-.muted {
-  color: var(--muted);
-  font-size: 0.875rem;
-}
-
-.address-pill {
-  padding: 0.125rem 0.5rem;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
-  font-size: 0.8rem;
-}
+/* -------------------------------------------------------------- shell chrome */
 
 .shell-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 1rem 1.5rem;
-  border-bottom: 1px solid var(--border);
+  gap: 1rem;
+  padding: 0.875rem 1.25rem;
+  border-bottom: 1px solid var(--rule);
+}
+
+.shell-header strong {
+  font-variation-settings: "wdth" 108, "wght" 650;
+  letter-spacing: -0.01em;
+}
+
+.address-pill {
+  padding: 0.25rem 0.5rem;
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  background: transparent;
+  font-family: var(--data);
+  font-size: 0.625rem;
+  color: var(--ink-soft);
+  white-space: nowrap;
 }
 
 .tabs {
   display: flex;
-  gap: 0.5rem;
-  padding: 0.75rem 1.5rem;
-  border-bottom: 1px solid var(--border);
+  gap: 1.5rem;
+  padding: 0 1.25rem;
+  border-bottom: 1px solid var(--rule);
 }
 
 .tab {
-  background: transparent;
-  color: var(--muted);
+  position: relative;
+  padding: 0.75rem 0;
   border: none;
-  font-weight: 500;
-  padding: 0.375rem 0.75rem;
-  border-radius: 0.375rem;
+  background: transparent;
+  color: var(--ink-soft);
+  font-family: var(--display);
+  font-size: 0.8125rem;
+  font-variation-settings: "wght" 550;
 }
 
 .tab.active {
-  background: color-mix(in srgb, var(--accent) 14%, transparent);
-  color: var(--accent);
+  background: transparent;
+  color: var(--ink);
 }
+
+/* The active marker is a rule under the label, not a filled pill — a filled
+   tab would read as a redaction block and claim a meaning it doesn't have. */
+.tab.active::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 -1px 0;
+  height: 2px;
+  background: var(--ink);
+}
+
+/* -------------------------------------------------------------------- forms */
+
+label {
+  display: block;
+  font-size: 0.6875rem;
+  font-variation-settings: "wght" 600;
+  color: var(--ink-soft);
+}
+
+input {
+  width: 100%;
+  padding: 0.625rem 0.75rem;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--card);
+  color: var(--ink);
+  font-family: var(--data);
+  font-size: 0.8125rem;
+}
+
+input::placeholder {
+  color: var(--ink-soft);
+  opacity: 0.55;
+}
+
+input:focus-visible {
+  outline: var(--focus);
+  outline-offset: 1px;
+  border-color: transparent;
+}
+
+input:disabled {
+  opacity: 0.55;
+}
+
+/* Primary action: ink on paper. */
+button {
+  padding: 0.6875rem 1rem;
+  border: 1px solid var(--ink);
+  border-radius: var(--radius);
+  background: var(--ink);
+  color: var(--card);
+  font-family: var(--display);
+  font-size: 0.8125rem;
+  font-variation-settings: "wght" 650;
+  cursor: pointer;
+}
+
+/* Fading the ink fill turns a disabled primary into a heavy grey slab that
+   still dominates the page. Empty it out instead: a disabled action should
+   recede to the weight of a rule. */
+button:disabled {
+  border-color: var(--rule);
+  background: transparent;
+  color: var(--ink-soft);
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+/* Secondary action: the same shape, unfilled. Explicit opt-in via class so a
+   new button is primary by default — the opposite of the previous rule, which
+   quietly demoted every `type="button"` (including "Activate confidential
+   balance") to a secondary-looking link. */
+.btn-ghost {
+  background: transparent;
+  color: var(--ink);
+}
+
+.btn-small {
+  padding: 0.375rem 0.75rem;
+  font-size: 0.6875rem;
+}
+
+/* --------------------------------------------------------------- data blocks */
 
 .details {
   display: grid;
   grid-template-columns: max-content 1fr;
-  gap: 0.375rem 1rem;
+  gap: 0.5rem 1.25rem;
+  margin: 0;
 }
 
 .details dt {
-  color: var(--muted);
-  font-size: 0.875rem;
+  font-family: var(--data);
+  font-size: 0.5625rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  align-self: center;
 }
 
 .details dd {
   margin: 0;
-  font-family: ui-monospace, monospace;
-  font-size: 0.875rem;
+  font-family: var(--data);
+  font-size: 0.8125rem;
   word-break: break-all;
 }
 
 .confidential {
   margin-top: 1.5rem;
-  gap: 1.5rem;
+  gap: 1rem;
 }
 
 .balance-card,
 .send-form,
 .activity-feed {
-  padding: 1rem;
-  border: 1px solid var(--border);
-  border-radius: 0.5rem;
+  padding: 1.125rem 1.25rem 1.25rem;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--card);
 }
 
 .balance-card h2,
 .send-form h2,
 .activity-feed h2 {
   margin-top: 0;
-  font-size: 1rem;
 }
+
+/* ------------------------------------------------------- the redaction block
+ * Private money is printed inside a block that has been taken off the record.
+ * This is the one place a near-black surface is correct.
+ * ------------------------------------------------------------------------- */
+
+.redacted {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--card);
+}
+
+.redacted .muted,
+.redacted .cell-label,
+.redacted .cell-note {
+  color: #96a186;
+}
+
+.redacted a {
+  color: var(--card);
+}
+
+/* An amount you decrypted resolves out of blur, because your browser genuinely
+   just decrypted it. An amount you CANNOT decrypt (`.sealed` — someone else's
+   transfer) stays blurred permanently: the blur is the true state of your
+   knowledge, not a loading placeholder. */
+@keyframes resolve {
+  from {
+    filter: blur(7px);
+    opacity: 0.3;
+    letter-spacing: 0.09em;
+  }
+  to {
+    filter: blur(0);
+    opacity: 1;
+    letter-spacing: -0.045em;
+  }
+}
+
+.decrypted {
+  animation: resolve 0.65s cubic-bezier(0.2, 0.7, 0.3, 1) both;
+}
+
+.sealed {
+  filter: blur(5px);
+  opacity: 0.55;
+  user-select: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .decrypted {
+    animation: none;
+  }
+}
+
+/* ------------------------------------------------------------ balance cells */
+
+.cell {
+  padding: 1rem 1.125rem 1.125rem;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--card);
+}
+
+.cell-label {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-bottom: 0.625rem;
+  font-family: var(--data);
+  font-size: 0.5625rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+
+.cell-note {
+  margin: 0.5rem 0 0;
+  font-size: 0.75rem;
+  color: var(--ink-soft);
+  line-height: 1.4;
+}
+
+.amount {
+  display: block;
+  font-family: var(--data);
+  font-size: clamp(1.25rem, 3.4vw, 1.75rem);
+  font-weight: 500;
+  letter-spacing: -0.045em;
+  line-height: 1;
+}
+
+/* The fraction is real precision, not noise — stroops matter — but it should
+   not compete with the whole-lumen figure for the first read. */
+.amount .frac {
+  font-size: 0.62em;
+  letter-spacing: -0.02em;
+  color: var(--ink-soft);
+}
+
+.amount .unit {
+  margin-left: 0.4em;
+  font-size: 0.5em;
+  letter-spacing: 0;
+  color: var(--ink-soft);
+}
+
+.redacted .amount .frac,
+.redacted .amount .unit {
+  color: #8b9880;
+}
+
+/* ------------------------------------------------------------------- legend */
+
+.dot {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 50%;
+}
+
+.dot-exposed {
+  background: var(--exposed);
+}
+
+.dot-veil {
+  background: var(--veil);
+}
+
+.redacted .dot-veil {
+  background: #9c90ff;
+}
+
+/* The one-line "is this amount public or private?" note that sits above every
+   action form. Never ship an action panel without one. */
+.legend {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  margin: 0 0 1rem;
+  padding: 0.625rem 0.75rem;
+  border-radius: var(--radius);
+  font-size: 0.75rem;
+  line-height: 1.45;
+  color: var(--ink-soft);
+}
+
+.legend-exposed {
+  background: var(--exposed-wash);
+}
+
+.legend-veil {
+  background: var(--veil-wash);
+}
+
+.legend .dot {
+  margin-top: 0.35rem;
+}
+
+.legend b {
+  color: var(--ink);
+  font-weight: normal;
+  font-variation-settings: "wght" 650;
+}
+
+.chip {
+  display: inline-block;
+  padding: 0.1875rem 0.375rem;
+  border-radius: 2px;
+  font-family: var(--data);
+  font-size: 0.5625rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.chip-exposed {
+  background: var(--exposed);
+  color: #f5eedc;
+}
+
+.chip-veil {
+  background: var(--veil);
+  color: #e7e4ff;
+}
+
+/* --------------------------------------------------------- segmented actions */
+
+.seg {
+  display: flex;
+  margin-bottom: 1.125rem;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--card);
+}
+
+.seg button {
+  flex: 1;
+  padding: 0.5rem 0.25rem;
+  border: none;
+  border-right: 1px solid var(--rule);
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink-soft);
+  font-size: 0.75rem;
+  font-variation-settings: "wght" 600;
+}
+
+.seg button:last-child {
+  border-right: none;
+}
+
+.seg button[aria-pressed="true"] {
+  background: var(--ink);
+  color: var(--card);
+}
+
+/* ----------------------------------------------------------------- call-out */
+
+.callout {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+  padding: 0.875rem 1rem;
+  border-left: 3px solid var(--veil);
+  border-radius: 0 var(--radius) var(--radius) 0;
+  background: var(--veil-wash);
+}
+
+.callout-body {
+  flex: 1 1 14rem;
+  min-width: 0;
+}
+
+.callout-body strong {
+  display: block;
+  font-size: 0.875rem;
+  font-variation-settings: "wght" 650;
+}
+
+.callout-body span {
+  font-size: 0.75rem;
+  color: var(--ink-soft);
+}
+
+/* ------------------------------------------------------- work-in-progress bar
+ * Proving runs in-browser and takes ~10s. A button that only changes its label
+ * for that long reads as a hang, so the button says how long and shows motion.
+ * ------------------------------------------------------------------------- */
+
+.btn-working {
+  position: relative;
+  overflow: hidden;
+  border-color: var(--rule);
+  background: var(--card);
+  color: var(--ink);
+  cursor: progress;
+}
+
+.btn-working::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--veil);
+  opacity: 0.18;
+  transform-origin: left;
+  animation: sweep 1.7s ease-in-out infinite;
+}
+
+.btn-working > span {
+  position: relative;
+}
+
+@keyframes sweep {
+  0% {
+    transform: scaleX(0);
+  }
+  60% {
+    transform: scaleX(1);
+  }
+  100% {
+    transform: scaleX(1);
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .btn-working::before {
+    animation: none;
+    transform: scaleX(1);
+  }
+}
+
+/* ----------------------------------------------------------------- messages */
+
+.error {
+  color: var(--alert);
+  font-size: 0.8125rem;
+}
+
+.muted {
+  color: var(--ink-soft);
+  font-size: 0.8125rem;
+}
+
+.info-tip {
+  margin-bottom: 0.875rem;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--card);
+}
+
+.info-tip summary {
+  cursor: pointer;
+  font-size: 0.75rem;
+  font-variation-settings: "wght" 600;
+  color: var(--ink-soft);
+}
+
+.info-tip > *:not(summary) {
+  margin-top: 0.5rem;
+}
+
+.empty {
+  padding: 2rem 0.5rem 2.25rem;
+  text-align: center;
+}
+
+.empty p {
+  margin: 0 0 1rem;
+  color: var(--ink-soft);
+  font-size: 0.8125rem;
+}
+
+/* ----------------------------------------------------------------- activity */
 
 .activity-feed-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 1rem;
 }
 
 .activity-feed-header button {
-  padding: 0.25rem 0.625rem;
-  font-size: 0.8rem;
+  padding: 0.375rem 0.75rem;
+  background: transparent;
+  color: var(--ink);
+  font-size: 0.6875rem;
 }
 
 .activity-list {
   list-style: none;
-  margin: 0.75rem 0 0;
+  margin: 0.875rem -1.25rem 0;
   padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
 }
 
+/* Greenbar: the public record is enumerable, so it prints in stripes. The
+   shielded pool has no rows of yours to enumerate — see SppBoundaryFeed. */
 .activity-row {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  padding: 0.5rem 0;
-  border-bottom: 1px solid var(--border);
-  font-size: 0.875rem;
+  gap: 1rem;
+  padding: 0.625rem 1.25rem;
+  font-size: 0.8125rem;
 }
 
-.activity-row:last-child {
-  border-bottom: none;
+.activity-row:nth-child(odd) {
+  background: var(--paper-alt);
 }
 
 .activity-row-main,
 .activity-row-meta {
   display: flex;
   flex-direction: column;
-  gap: 0.125rem;
+  gap: 0.1875rem;
+  min-width: 0;
 }
 
 .activity-row-meta {
   align-items: flex-end;
   text-align: right;
+  font-family: var(--data);
+  white-space: nowrap;
 }
 
-/* Specificity matches (and, by source order, overrides) the global
-   `button[type="button"]:not(.tab)` accent-color rule near the top of this
-   file — this button reports a failure, so it needs the error color, not
-   the default accent. */
+.activity-row-main .muted {
+  font-family: var(--data);
+  font-size: 0.625rem;
+}
+
+.activity-type {
+  font-variation-settings: "wght" 650;
+}
+
+/* Specificity matches (and, by source order, overrides) the generic `button`
+   rule above — this button reports a failure, so it needs the error colour and
+   no button chrome at all. */
 .activity-row-meta button.retry-inline {
   padding: 0;
   border: none;
   background: transparent;
-  color: #dc2626;
-  font-size: 0.875rem;
-  font-weight: 400;
+  color: var(--alert);
+  font-family: var(--display);
+  font-size: 0.75rem;
+  font-variation-settings: "wght" 400;
   text-decoration: underline;
   text-underline-offset: 0.15em;
   cursor: pointer;
 }
 
-.activity-type {
-  font-weight: 600;
-}
+/* ------------------------------------------------------------------- mobile */
 
-/* Task 12 (SPP): the session-account explainer. Collapsed by default — the
-   whole point of the shielded tab's design is that the session address is an
-   implementation detail the user only opens when they need to receive. */
-.info-tip {
-  margin-bottom: 0.75rem;
-  padding: 0.5rem 0.75rem;
-  border: 1px solid var(--border);
-  border-radius: 0.375rem;
-}
+@media (max-width: 30rem) {
+  .screen {
+    margin: 1.5rem auto;
+    padding: 0 1rem;
+  }
 
-.info-tip summary {
-  cursor: pointer;
-  color: var(--accent);
-  font-size: 0.875rem;
-}
+  .shell-header,
+  .tabs {
+    padding-inline: 1rem;
+  }
 
-.info-tip > *:not(summary) {
-  margin-top: 0.5rem;
+  .balance-card,
+  .send-form,
+  .activity-feed {
+    padding-inline: 1rem;
+  }
+
+  .activity-list {
+    margin-inline: -1rem;
+  }
+
+  .activity-row {
+    padding-inline: 1rem;
+  }
+
+  /* A 56-char C-address in a fixed grid column forces the page wider than the
+     viewport; stack the term over its value instead of letting it overflow. */
+  .details {
+    grid-template-columns: 1fr;
+    gap: 0.25rem;
+  }
+
+  .details dd:not(:last-child) {
+    margin-bottom: 0.5rem;
+  }
+
+  /* Safari on iOS zooms the viewport when a focused input's text is under
+     16px, which throws the layout off mid-typing. Amounts and addresses are
+     typed on phones here, so hold the floor at 16px. */
+  input {
+    font-size: 16px;
+  }
 }

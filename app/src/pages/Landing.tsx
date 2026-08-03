@@ -42,7 +42,7 @@ export default function Landing() {
         <button type="button" onClick={() => navigate("/onboarding")}>
           Create a new wallet
         </button>
-        <button type="button" onClick={() => navigate("/connect")}>
+        <button type="button" className="btn-ghost" onClick={() => navigate("/connect")}>
           I already have a wallet
         </button>
       </div>
