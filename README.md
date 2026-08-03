@@ -1,4 +1,4 @@
-# GrantFox Privacy Wallet
+# Privacy Wallet
 
 A Stellar wallet that combines two independent privacy rails — **Confidential
 Transfers (CT)** and a **Selective Privacy Pool (SPP)** — behind one
@@ -56,7 +56,7 @@ flowchart TB
 
     Relayer["SDF Channels relayer proxy<br/>(fee-sponsored submission)"]
 
-    subgraph Backend["GrantFox backend (Railway)"]
+    subgraph Backend["Privacy Wallet backend (Railway)"]
         API["api — REST activity + JSON-RPC bootnode (POST /rpc)"]
         Worker["worker — indexer, polls RPC on an interval"]
         DB[("Postgres<br/>events · ct_activity · cursors")]
@@ -107,8 +107,8 @@ reference bootnode is unusable for a different reason.
 
 ```
 app/                # React 19 + Vite wallet SPA — passkey onboarding, CT rail, SPP rail, unified Activity view
-api/                # @grantfox/api — Postgres-backed indexer worker + REST/bootnode HTTP server
-packages/shared/     # @grantfox/shared — TESTNET network/contract config, shared CT invoke glue
+api/                # @privacy-wallet/api — Postgres-backed indexer worker + REST/bootnode HTTP server
+packages/shared/     # @privacy-wallet/shared — TESTNET network/contract config, shared CT invoke glue
 packages/ctd-sdk/    # @ctd/sdk — vendored Confidential Token client SDK (witness/proving/chain/state)
 contracts/           # CT contract suite deployment record (testnet) + deploy/import procedure
 railway/             # Config-as-code for the three Railway services (api/worker/app)
@@ -129,8 +129,8 @@ pnpm install
 ```bash
 docker compose up -d postgres                     # postgres:16-alpine on localhost:5433 (see docker-compose.yml)
 cp .env.example .env                               # DATABASE_URL defaults to postgres://grantfox:grantfox@localhost:5433/grantfox
-pnpm --filter @grantfox/api run db:migrate          # applies api/drizzle/0000_...sql
-pnpm --filter @grantfox/api run backfill:spp:load   # loads api/fixtures/spp-backfill.json (518 SPP events) + initializes the SPP stream cursor
+pnpm --filter @privacy-wallet/api run db:migrate          # applies api/drizzle/0000_...sql
+pnpm --filter @privacy-wallet/api run backfill:spp:load   # loads api/fixtures/spp-backfill.json (518 SPP events) + initializes the SPP stream cursor
 ```
 
 The backfill step is **required** — without it, the SPP rail's history sync
@@ -141,8 +141,8 @@ idempotent; safe to re-run.
 ### 2. API + worker
 
 ```bash
-pnpm --filter @grantfox/api dev      # REST + bootnode server, http://localhost:3000
-pnpm --filter @grantfox/api worker   # indexer worker (separate process, same DB)
+pnpm --filter @privacy-wallet/api dev      # REST + bootnode server, http://localhost:3000
+pnpm --filter @privacy-wallet/api worker   # indexer worker (separate process, same DB)
 ```
 
 ### 3. App
@@ -307,7 +307,7 @@ own upstream MIT license (see `packages/ctd-sdk/ATTRIBUTION.md`).
 
 - `app`: 119 tests (`pnpm --filter app test`), `typecheck`, and `build` all
   green.
-- `api`: 173 tests (`pnpm --filter @grantfox/api test`, with `DATABASE_URL`
+- `api`: 173 tests (`pnpm --filter @privacy-wallet/api test`, with `DATABASE_URL`
   set against a running Postgres for the full count — DB-integration cases
   auto-skip otherwise), `build` green.
 - `packages/shared`: 7 tests, `build` green.

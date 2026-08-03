@@ -63,7 +63,7 @@ import {
   type Point,
 } from "@ctd/sdk";
 import { loadCircuit } from "@ctd/sdk/proving/artifacts";
-import { TESTNET, buildCtInvokeTx } from "@grantfox/shared";
+import { TESTNET, buildCtInvokeTx } from "@privacy-wallet/shared";
 
 const { rpcUrl, networkPassphrase } = TESTNET;
 const { token, auditorId, deployedAtLedger } = TESTNET.ct;

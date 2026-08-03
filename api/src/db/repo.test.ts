@@ -5,7 +5,7 @@
  * on a missing DB.
  *
  * Run: `docker compose up -d postgres` then
- * `DATABASE_URL=postgres://grantfox:grantfox@localhost:5433/grantfox pnpm --filter @grantfox/api test`
+ * `DATABASE_URL=postgres://grantfox:grantfox@localhost:5433/grantfox pnpm --filter @privacy-wallet/api test`
  */
 import { sql } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";

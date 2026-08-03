@@ -35,7 +35,7 @@ export default function Onboarding() {
     <main className="screen">
       <h1>Create your wallet</h1>
       <p>
-        GrantFox creates a passkey-secured smart account on Stellar testnet. Your
+        Privacy Wallet creates a passkey-secured smart account on Stellar testnet. Your
         device will prompt you to create a passkey — no seed phrase to write down.
       </p>
       <form onSubmit={handleSubmit} className="stack">

@@ -1,5 +1,5 @@
 /**
- * XDR-decoding adapter over this repo's own REST API (`@grantfox/api`),
+ * XDR-decoding adapter over this repo's own REST API (`@privacy-wallet/api`),
  * standing in for `@ctd/sdk`'s `IndexerClient` when talking to OUR indexer
  * instead of the reference Goldsky-backed one.
  *

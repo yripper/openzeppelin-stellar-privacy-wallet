@@ -1,6 +1,6 @@
 /**
- * Confidential transfer form: recipient address (C… only — every GrantFox
- * wallet is a smart-account contract address; a pasted G-address gets a
+ * Confidential transfer form: recipient address (C… only — every Privacy
+ * Wallet account is a smart-account contract address; a pasted G-address gets a
  * dedicated "wrong address kind" message rather than a generic invalid
  * one), a live "is this address registered for confidential transfers?"
  * check on paste/blur (CT contract read via simulation — `rail.isRegistered`),
@@ -36,7 +36,7 @@ export default function SendForm() {
       setStatus("idle");
       return;
     }
-    // Every GrantFox wallet is a smart-account C-address — a G-address is
+    // Every Privacy Wallet account is a smart-account C-address — a G-address is
     // never a valid recipient within this app's own user base, even though
     // the CT protocol itself also supports keypair (G-address) holders
     // (`scripts/smoke-ct.ts`'s "bob"). Distinguish the two invalid cases so
@@ -122,7 +122,7 @@ export default function SendForm() {
         {status === "not-contract" ? (
           <p className="error">
             That's a Stellar account address (G…), not a wallet's contract address — confidential balances live on
-            C… addresses. Ask the recipient for their GrantFox wallet's C… address instead.
+            C… addresses. Ask the recipient for their Privacy Wallet C… address instead.
           </p>
         ) : null}
         {status === "check-failed" ? <p className="error">Couldn't check this address right now.</p> : null}

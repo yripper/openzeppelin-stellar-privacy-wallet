@@ -2,7 +2,7 @@
  * Unit tests for the XDR-decoding indexer adapter (`ct-indexer.ts`).
  *
  * All four event rows below are REAL, not synthetic: captured live from
- * `@grantfox/api`'s actual `GET /contracts/:contractId/events` HTTP
+ * `@privacy-wallet/api`'s actual `GET /contracts/:contractId/events` HTTP
  * response, running against a local Postgres seeded from the committed,
  * live-captured fixture `api/src/modules/indexer/__fixtures__/ct-events.json`
  * (13 real events from the deployed testnet CT contract, gate #1's run —
@@ -11,10 +11,10 @@
  *
  *   docker compose up -d postgres
  *   DATABASE_URL=postgres://grantfox:grantfox@localhost:5433/grantfox \
- *     pnpm --filter @grantfox/api exec drizzle-kit migrate
+ *     pnpm --filter @privacy-wallet/api exec drizzle-kit migrate
  *   # seeded events + normalized ct_activity from the committed fixture
  *   DATABASE_URL=postgres://grantfox:grantfox@localhost:5433/grantfox PORT=3801 \
- *     pnpm --filter @grantfox/api exec tsx src/server.ts &
+ *     pnpm --filter @privacy-wallet/api exec tsx src/server.ts &
  *   curl "http://localhost:3801/contracts/CBTEJFLW25UXIDAIWJ3KUJGI5CE2YLHM5GQM2VFU7JQZS53HE3HKGCLH/events?startLedger=0&limit=20"
  *
  * The transfer row's decoded field values are cross-checked against

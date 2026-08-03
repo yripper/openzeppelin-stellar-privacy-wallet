@@ -19,7 +19,7 @@ This module is the seam for that split:
 
 | File | Purpose |
 |---|---|
-| `packages/shared/src/ct-tx.ts` | `buildCtInvokeOp` (pure op builder) + `buildCtInvokeTx` (build → simulate). Exported from the `@grantfox/shared` barrel. |
+| `packages/shared/src/ct-tx.ts` | `buildCtInvokeOp` (pure op builder) + `buildCtInvokeTx` (build → simulate). Exported from the `@privacy-wallet/shared` barrel. |
 | `packages/shared/src/ct-tx.test.ts` | Offline vitest suite (7 tests): arg-encoding round-trip + the full build/simulate/assemble path against a stubbed `rpc.Server`. |
 | `scripts/smoke-ct.ts` | Gate #1 end-to-end script. Run with `pnpm smoke:ct` (= `tsx scripts/smoke-ct.ts`). |
 
@@ -84,7 +84,7 @@ What this proves: smart-account `__check_auth` accepts our hand-built `AuthPaylo
 - `smart-account-kit` 0.4.2 — `Ed25519Signer`, `computeEntryAuthDigest`, `signerToScVal`, `resimulateAndAssemble` (smoke only).
 - `smart-account-kit-bindings` 0.3.0 — `Client.deploy`, `get_context_rule` (smoke only).
 - `@ctd/sdk` (workspace) — witness builders, `CircuitProver`, `loadCircuit` (via the `@ctd/sdk/proving/artifacts` subpath), payload encoders, `ChainClient`, `StateEngine` (smoke only).
-- `@grantfox/shared` — `TESTNET` config.
+- `@privacy-wallet/shared` — `TESTNET` config.
 - Root `pnpm.overrides` pins `@stellar/stellar-sdk` to `16.2.0` workspace-wide, because `smart-account-kit@0.4.2` depends on `16.0.1` directly. Two copies would mean two `xdr` class identities across the auth-entry handoff — see Gotchas.
 
 ## Gotchas & invariants
@@ -102,5 +102,5 @@ What this proves: smart-account `__check_auth` accepts our hand-built `AuthPaylo
 
 ## Testing
 
-- `pnpm --filter @grantfox/shared test` — 7 offline vitest tests, no network. Covers the ScVal round-trip through the invoke op (address/u32/i128/bytes/map, ordering, empty args, non-contract-address rejection) and the full `buildCtInvokeTx` path against a stubbed `rpc.Server` (source account, built op, auth entries surfaced unsigned, simulation-failure propagation). Verified passing.
+- `pnpm --filter @privacy-wallet/shared test` — 7 offline vitest tests, no network. Covers the ScVal round-trip through the invoke op (address/u32/i128/bytes/map, ordering, empty args, non-contract-address rejection) and the full `buildCtInvokeTx` path against a stubbed `rpc.Server` (source account, built op, auth entries surfaced unsigned, simulation-failure propagation). Verified passing.
 - `pnpm smoke:ct` (or `pnpm exec tsx scripts/smoke-ct.ts`) — Gate #1 on testnet. Needs network, spends ~1 XLM of fees from throwaway friendbot accounts, and takes ~3 minutes (three UltraHonk proofs + 8 transactions). Verified passing; transcript above.

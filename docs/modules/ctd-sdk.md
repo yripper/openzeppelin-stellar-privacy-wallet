@@ -17,7 +17,7 @@ This package is **vendored, not authored here** — see [Vendoring](#vendoring) 
 - Local modifications so far (authoritative list: `packages/ctd-sdk/ATTRIBUTION.md`), both `package.json`-only, **zero source changes**:
   1. `@stellar/stellar-sdk` bumped from upstream's `^14.2.0` to this monorepo's pinned `16.2.0`. `tsc -p tsconfig.json` compiled clean; the package's stellar-sdk surface (`Address`, `xdr.ScVal`, `nativeToScVal`, `scValToNative`, `rpc`) is stable across 14→16 for the call sites used here.
   2. Added a `"./proving/artifacts"` subpath export so built-package consumers can reach the Node-only `loadCircuit` (upstream's own scripts get at it by relative source path, which is not available to a workspace dependency).
-- Package name is kept as-is (`@ctd/sdk`, not renamed to a `@grantfox/*` scope) so upstream import paths and the vendored tests keep working unmodified. Consumers depend on it via `"@ctd/sdk": "workspace:*"`.
+- Package name is kept as-is (`@ctd/sdk`, not renamed to a `@privacy-wallet/*` scope) so upstream import paths and the vendored tests keep working unmodified. Consumers depend on it via `"@ctd/sdk": "workspace:*"`.
 
 ## Structure
 

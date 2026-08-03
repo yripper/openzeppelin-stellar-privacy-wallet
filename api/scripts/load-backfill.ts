@@ -6,7 +6,7 @@
  * `src/lib/spp-backfill-loader.ts`'s module doc for `SPP_STREAM_KEY`'s
  * replication caveat and the cursor-mode decision table.
  *
- * Usage: `DATABASE_URL=... pnpm --filter @grantfox/api exec tsx scripts/load-backfill.ts [fixturePath]`
+ * Usage: `DATABASE_URL=... pnpm --filter @privacy-wallet/api exec tsx scripts/load-backfill.ts [fixturePath]`
  * (defaults to `api/fixtures/spp-backfill.json`).
  */
 import { eq, sql } from "drizzle-orm";

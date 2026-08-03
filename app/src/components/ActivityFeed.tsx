@@ -1,6 +1,6 @@
 /**
  * Confidential-token activity feed: `GET /accounts/:address/activity`
- * (`@grantfox/api`'s own newest-first `ct_activity` feed — normalized rows
+ * (`@privacy-wallet/api`'s own newest-first `ct_activity` feed — normalized rows
  * with the raw hex `ciphertexts`, see `docs/modules/api.md`). `deposit`/
  * `withdraw` amounts are public (already plaintext on the row); `transfer`
  * amounts are `null` on the row and decrypted client-side by resolving the

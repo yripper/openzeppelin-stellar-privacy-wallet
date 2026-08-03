@@ -71,7 +71,7 @@ export interface SppBoundaryEvent {
 const MAX_ENTRIES = 200;
 
 function storageKey(sessionAddress: string): string {
-  return `grantfox:spp-boundary:${sessionAddress}`;
+  return `privacy-wallet:spp-boundary:${sessionAddress}`;
 }
 
 /** Append one boundary event for `sessionAddress`, newest-first, capped at {@link MAX_ENTRIES}. */

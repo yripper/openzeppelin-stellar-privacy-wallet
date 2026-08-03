@@ -1,6 +1,6 @@
 /**
  * The unified Activity view: Confidential Token activity (register/deposit/
- * merge/withdraw/transfer, from `@grantfox/api`) alongside this wallet's SPP
+ * merge/withdraw/transfer, from `@privacy-wallet/api`) alongside this wallet's SPP
  * shield/unshield boundary events (recorded locally — see
  * `lib/spp-boundary-log.ts`'s module doc for why).
  *

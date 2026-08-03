@@ -29,7 +29,7 @@ export default function Shell() {
   return (
     <div className="shell">
       <header className="shell-header">
-        <strong>GrantFox</strong>
+        <strong>Privacy Wallet</strong>
         {contractId ? (
           <code title={contractId} className="address-pill">
             {truncate(contractId)}

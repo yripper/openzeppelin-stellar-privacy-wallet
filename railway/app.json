@@ -2,7 +2,7 @@
   "$schema": "https://railway.com/railway.schema.json",
   "build": {
     "builder": "RAILPACK",
-    "buildCommand": "pnpm install --frozen-lockfile && pnpm --filter @grantfox/shared build && pnpm --filter @ctd/sdk build && pnpm --filter app build"
+    "buildCommand": "pnpm install --frozen-lockfile && pnpm --filter @privacy-wallet/shared build && pnpm --filter @ctd/sdk build && pnpm --filter app build"
   },
   "deploy": {
     "startCommand": "node app/server.mjs",

@@ -49,7 +49,7 @@
  * doc comment (`api/src/db/schema.ts:22-25`, "Do not invent a different id
  * format here"). `naturalEventId` below REPLICATES that format rather than
  * importing `@ctd/sdk` — that package pulls in the zk-proving stack
- * (`@aztec/bb.js`, `@noir-lang/noir_js`), which `@grantfox/api` has no other
+ * (`@aztec/bb.js`, `@noir-lang/noir_js`), which `@privacy-wallet/api` has no other
  * reason to depend on for one string-template function.
  *
  * Network timeout (Task 7 review fix): `RpcServer.Options.timeout` (the

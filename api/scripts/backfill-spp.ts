@@ -6,7 +6,7 @@
  * event's `txHash` via Horizon testnet, map to `RawEvent` rows, and write a
  * deterministic, committed fixture (`api/fixtures/spp-backfill.json`).
  *
- * Usage: `pnpm --filter @grantfox/api exec tsx scripts/backfill-spp.ts`
+ * Usage: `pnpm --filter @privacy-wallet/api exec tsx scripts/backfill-spp.ts`
  * Idempotent: re-running refreshes the fixture to whatever is on-chain "to
  * tip at run time" (the brief's wording) — safe to re-run periodically until
  * Task 9's own bootnode (serving from OUR events table) makes this recovery
@@ -18,7 +18,7 @@
  * (not unit tested against a live network, per the brief — exercised by
  * actually running this script).
  */
-import { TESTNET } from "@grantfox/shared";
+import { TESTNET } from "@privacy-wallet/shared";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";

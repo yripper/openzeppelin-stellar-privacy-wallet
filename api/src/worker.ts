@@ -10,7 +10,7 @@
  * enough to test without a real DB, real network, or real signals; `main`
  * is the thin process-lifecycle shell around them.
  */
-import { TESTNET } from "@grantfox/shared";
+import { TESTNET } from "@privacy-wallet/shared";
 import { pathToFileURL } from "node:url";
 import { createDb } from "./db/client.js";
 import { createRepo, type IndexerRepo } from "./db/repo.js";

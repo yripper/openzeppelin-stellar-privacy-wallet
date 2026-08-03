@@ -13,7 +13,7 @@
  * real `createRepo(db)` (`db/repo.ts`) satisfies this structurally with no
  * cast, since `IndexerRepo` is a superset.
  *
- * CORS (Task 11): the browser wallet (`@grantfox/app`) is the first consumer
+ * CORS (Task 11): the browser wallet (`@privacy-wallet/app`) is the first consumer
  * that calls this API directly from a different origin (`http://localhost:5173`
  * dev, a deployed static-site origin in production) rather than
  * server-to-server/CLI. Registered permissively (`origin: true`, reflecting

@@ -1,20 +1,20 @@
 {
-  "name": "grantfox-privacy-wallet",
+  "name": "privacy-wallet",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@10.15.0",
   "engines": { "node": ">=22" },
   "scripts": {
     "dev": "pnpm --filter app dev",
-    "api": "pnpm --filter @grantfox/api dev",
-    "worker": "pnpm --filter @grantfox/api worker",
+    "api": "pnpm --filter @privacy-wallet/api dev",
+    "worker": "pnpm --filter @privacy-wallet/api worker",
     "test": "pnpm -r test",
     "build": "pnpm -r build",
     "smoke:ct": "tsx scripts/smoke-ct.ts"
   },
   "devDependencies": {
     "@ctd/sdk": "workspace:*",
-    "@grantfox/shared": "workspace:*",
+    "@privacy-wallet/shared": "workspace:*",
     "@stellar/stellar-sdk": "16.2.0",
     "@types/node": "^22.10.0",
     "smart-account-kit": "0.4.2",

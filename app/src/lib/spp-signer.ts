@@ -4,7 +4,7 @@
  *
  * ## Why a session key at all
  *
- * Every GrantFox wallet is a passkey smart account (a `C…` contract address),
+ * Every Privacy Wallet account is a passkey smart account (a `C…` contract address),
  * but the SPP SDK is G-address-only at the parser level: `user_address` is fed
  * straight into `stellar_strkey::ed25519::PublicKey::parse` on both signing
  * paths (`unsigned_tx_for_signing`'s `user_address.parse()` and

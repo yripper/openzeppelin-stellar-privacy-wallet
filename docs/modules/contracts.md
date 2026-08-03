@@ -23,7 +23,7 @@ monorepo imports.
 
 ## Endpoints / Public surface
 
-- No code exports. Consumers read `TESTNET.ct` from `@grantfox/shared`
+- No code exports. Consumers read `TESTNET.ct` from `@privacy-wallet/shared`
   (`packages/shared/src/config.ts`) rather than this JSON directly.
 
 ## Key methods
@@ -40,7 +40,7 @@ monorepo imports.
   script and the `stellar` CLI.
 - Consumed by: `packages/shared/src/config.ts` (`TESTNET.ct`), and
   transitively by any later package that reads CT contract addresses from
-  `@grantfox/shared`.
+  `@privacy-wallet/shared`.
 - The auditor's private key (`CT_AUDITOR_SECRET_HEX` in the repo-root
   `.env`, gitignored) is a sibling secret to this module's public data —
   needed to decrypt auditor ciphertexts client-side, never read from this
@@ -68,7 +68,7 @@ monorepo imports.
   misses the deploy/registration events.
 - `allowlist`, `blocklist`, `factory` addresses are recorded in
   `deployments/testnet.json` for completeness but are **not** part of the
-  `TESTNET.ct` interface in `@grantfox/shared` — that block only surfaces
+  `TESTNET.ct` interface in `@privacy-wallet/shared` — that block only surfaces
   `token`, `verifier`, `auditor`, `underlying`, `deployedAtLedger`,
   `auditorId`, `addrF`.
 

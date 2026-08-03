@@ -14,7 +14,7 @@
  */
 import { useCallback, useEffect, useReducer, useState, type FormEvent } from "react";
 import { StrKey } from "@stellar/stellar-sdk";
-import { TESTNET } from "@grantfox/shared";
+import { TESTNET } from "@privacy-wallet/shared";
 
 import { useWallet } from "../providers/WalletProvider.js";
 import { stroopsToXlm, truncateAddress, truncateHash, xlmToStroops } from "../lib/format.js";

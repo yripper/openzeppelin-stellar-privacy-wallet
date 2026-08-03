@@ -21,7 +21,7 @@ import {
   type ReactNode,
 } from "react";
 import { rpc } from "@stellar/stellar-sdk";
-import { TESTNET } from "@grantfox/shared";
+import { TESTNET } from "@privacy-wallet/shared";
 
 import { kit } from "../lib/kit.js";
 import { createBundle, loadBundle, resolveBundleForWallet, saveBundle, type PrivacyBundle } from "../lib/privacy-bundle.js";
@@ -132,7 +132,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         }
       }
 
-      const result = await kit.createWallet("GrantFox", userName, { autoSubmit: true });
+      const result = await kit.createWallet("Privacy Wallet", userName, { autoSubmit: true });
       assertDeployed(result.submitResult);
 
       // Fee-sponsored deploy via the relayer means the wallet exists at

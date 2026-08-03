@@ -6,7 +6,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { addressToField, toHex32 } from "@ctd/sdk";
 import { Keypair, StrKey } from "@stellar/stellar-sdk";
-import { TESTNET } from "@grantfox/shared";
+import { TESTNET } from "@privacy-wallet/shared";
 
 import {
   BundleOwnerMismatchError,

@@ -1,4 +1,4 @@
-import { TESTNET } from "@grantfox/shared";
+import { TESTNET } from "@privacy-wallet/shared";
 import { describe, expect, it } from "vitest";
 import { loadEnv } from "./env.js";
 

@@ -1,5 +1,5 @@
 {
-  "name": "@grantfox/api",
+  "name": "@privacy-wallet/api",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -21,7 +21,7 @@
   },
   "dependencies": {
     "@fastify/cors": "^11.3.0",
-    "@grantfox/shared": "workspace:*",
+    "@privacy-wallet/shared": "workspace:*",
     "@stellar/stellar-sdk": "16.2.0",
     "drizzle-orm": "^0.45",
     "fastify": "^5",

@@ -36,7 +36,7 @@ export default function Landing() {
 
   return (
     <main className="screen">
-      <h1>GrantFox Privacy Wallet</h1>
+      <h1>Privacy Wallet</h1>
       <p>A passkey-secured Stellar smart account with confidential balances.</p>
       <div className="stack">
         <button type="button" onClick={() => navigate("/onboarding")}>

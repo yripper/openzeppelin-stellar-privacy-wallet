@@ -1,5 +1,5 @@
 {
-  "name": "@grantfox/app",
+  "name": "@privacy-wallet/app",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -18,7 +18,7 @@
   },
   "dependencies": {
     "@ctd/sdk": "workspace:*",
-    "@grantfox/shared": "workspace:*",
+    "@privacy-wallet/shared": "workspace:*",
     "@stellar/stellar-sdk": "16.2.0",
     "buffer": "^6.0.3",
     "idb-keyval": "^6.3.0",

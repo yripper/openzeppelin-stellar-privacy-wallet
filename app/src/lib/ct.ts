@@ -48,7 +48,7 @@ import {
 import registerCircuit from "@ctd/sdk/circuits/register.json";
 import transferCircuit from "@ctd/sdk/circuits/transfer.json";
 import withdrawCircuit from "@ctd/sdk/circuits/withdraw.json";
-import { TESTNET, buildCtInvokeTx } from "@grantfox/shared";
+import { TESTNET, buildCtInvokeTx } from "@privacy-wallet/shared";
 
 import { kit } from "./kit.js";
 import { API_URL } from "./api-url.js";
@@ -57,7 +57,7 @@ import { ApiIndexerClient } from "./ct-indexer.js";
 import { humanizeError } from "./errors.js";
 
 /**
- * `@grantfox/api`'s base URL — the same base the wallet reads its activity feed
+ * `@privacy-wallet/api`'s base URL — the same base the wallet reads its activity feed
  * from. Re-exported (the definition moved to `api-url.ts` in Task 12, so the
  * SPP rail can point its bootnode at the same backend without importing this
  * module's heavy `@ctd/sdk`/bb.js graph).
@@ -118,7 +118,7 @@ export class CtRail {
     const indexer = new ApiIndexerClient({ baseUrl: API_URL });
     const engine = new StateEngine({
       client,
-      store: new LocalStorageStore(`grantfox:ct:${TESTNET.ct.token}:`),
+      store: new LocalStorageStore(`privacy-wallet:ct:${TESTNET.ct.token}:`),
       keys,
       address: cAddress,
       // hybridFetchEvents clamps the RPC leg to its retention window and

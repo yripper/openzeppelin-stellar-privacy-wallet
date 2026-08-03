@@ -48,7 +48,7 @@ import {
   rpc,
   xdr,
 } from "@stellar/stellar-sdk";
-import { TESTNET } from "@grantfox/shared";
+import { TESTNET } from "@privacy-wallet/shared";
 import type {
   Account,
   Client,

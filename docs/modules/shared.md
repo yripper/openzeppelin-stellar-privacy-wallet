@@ -6,7 +6,7 @@
 
 ## Purpose
 
-Cross-package config and constants for the privacy-wallet monorepo, published as `@grantfox/shared`. Every other package (`app`, `api`, and any later `packages/*`) imports network config, contract addresses, and shared types from here instead of hardcoding them — so a testnet/mainnet or contract-redeploy change happens in one place.
+Cross-package config and constants for the privacy-wallet monorepo, published as `@privacy-wallet/shared`. Every other package (`app`, `api`, and any later `packages/*`) imports network config, contract addresses, and shared types from here instead of hardcoding them — so a testnet/mainnet or contract-redeploy change happens in one place.
 
 ## Structure
 
@@ -48,5 +48,5 @@ Cross-package config and constants for the privacy-wallet monorepo, published as
 
 ## Testing
 
-- `pnpm --filter @grantfox/shared test` (`vitest run`) — 7 offline tests in `src/ct-tx.test.ts` covering the CT invoke glue (arg-encoding round-trip, built-op shape, auth-entry surfacing, simulation-failure propagation). No network: `rpc.Server`'s account lookup and simulation are stubbed. Verified passing.
+- `pnpm --filter @privacy-wallet/shared test` (`vitest run`) — 7 offline tests in `src/ct-tx.test.ts` covering the CT invoke glue (arg-encoding round-trip, built-op shape, auth-entry surfacing, simulation-failure propagation). No network: `rpc.Server`'s account lookup and simulation are stubbed. Verified passing.
 - `TESTNET` itself has no tests — it is a static `as const` object; its contract addresses are validated on-chain by `scripts/smoke-ct.ts` (see [`ct-tx.md`](ct-tx.md)).

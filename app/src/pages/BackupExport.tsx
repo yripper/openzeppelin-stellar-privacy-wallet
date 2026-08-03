@@ -49,7 +49,7 @@ export default function BackupExport() {
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
       anchor.href = url;
-      anchor.download = `grantfox-backup-${contractId?.slice(0, 8) ?? "wallet"}.json`;
+      anchor.download = `privacy-wallet-backup-${contractId?.slice(0, 8) ?? "wallet"}.json`;
       document.body.appendChild(anchor);
       anchor.click();
       anchor.remove();

@@ -9,7 +9,7 @@
  * providers/WalletProvider.tsx.
  */
 import { SmartAccountKit, IndexedDBStorage } from "smart-account-kit";
-import { TESTNET } from "@grantfox/shared";
+import { TESTNET } from "@privacy-wallet/shared";
 
 export const kit = new SmartAccountKit({
   rpcUrl: TESTNET.rpcUrl,
@@ -18,6 +18,6 @@ export const kit = new SmartAccountKit({
   webauthnVerifierAddress: TESTNET.smartAccount.webauthnVerifierAddress,
   ed25519VerifierAddress: TESTNET.smartAccount.ed25519VerifierAddress,
   relayerUrl: TESTNET.smartAccount.relayerUrl,
-  rpName: "GrantFox Privacy Wallet",
+  rpName: "Privacy Wallet",
   storage: new IndexedDBStorage(),
 });

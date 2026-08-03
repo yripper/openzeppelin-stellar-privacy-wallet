@@ -69,7 +69,7 @@ must **never** be committed. To import:
    block of `packages/shared/src/config.ts`'s `TESTNET` export
    (`auditorId` is always `0` — the only auditor key id this deploy
    registers).
-4. Rebuild: `pnpm --filter @grantfox/shared build`.
+4. Rebuild: `pnpm --filter @privacy-wallet/shared build`.
 
 ## Current deployment
 
@@ -88,7 +88,7 @@ the most recent import (deployed at ledger `3900251`, admin
 | factory | `CD6KN723TRLKMNHS6CFNMDEC4I6UWDKAXAFGMYU5NG5PQ7WMPL75IHTX` |
 
 Only `token`, `verifier`, `auditor`, `underlying`, `deployedAtLedger`,
-`auditorId`, and `addrF` are surfaced through `@grantfox/shared`'s `ct`
+`auditorId`, and `addrF` are surfaced through `@privacy-wallet/shared`'s `ct`
 block; `allowlist`/`blocklist`/`factory` are recorded in
 `deployments/testnet.json` for completeness (advanced/factory-mode token
 creation, not used by this monorepo yet) but are not part of the

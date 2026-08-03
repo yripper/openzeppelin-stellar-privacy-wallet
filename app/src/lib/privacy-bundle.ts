@@ -11,7 +11,7 @@
 import { get, set, del } from "idb-keyval";
 import { Keypair, StrKey } from "@stellar/stellar-sdk";
 import { addressToField, generateKeys, serializeKeys, type SerializedKeyPair } from "@ctd/sdk";
-import { TESTNET } from "@grantfox/shared";
+import { TESTNET } from "@privacy-wallet/shared";
 
 export interface PrivacyBundle {
   /** CT viewing/spending key material, serialized as `{ sk, addrF }` hex. */
@@ -35,7 +35,7 @@ export interface PrivacyBundle {
   walletContractId: string;
 }
 
-const STORAGE_KEY = "grantfox:privacy-bundle";
+const STORAGE_KEY = "privacy-wallet:privacy-bundle";
 
 /**
  * CT keys are bound to the TOKEN contract's `addr_f`, not the smart
