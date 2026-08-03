@@ -152,7 +152,8 @@ Three additive pieces, none removing or changing either per-rail tab:
 | `app/src/components/Amount.tsx` (redesign 2026-08-03) | The balance display treatment — large whole figure, de-emphasised 7-digit fraction, separate sign — over `format.ts`'s `splitStroops`. `reveal="decrypted"` resolves the figure out of blur on mount (it was just decrypted in this browser); `reveal="sealed"` stays blurred permanently (this wallet cannot read that amount at all). |
 | `app/src/components/MoveFunds.tsx` (redesign 2026-08-03) | Deposit and withdraw — one form, `mode`-switched, moved out of `BalanceCard.tsx`. Both lead with the `.legend-exposed` line stating the amount is published on chain, source-cited in the file's module doc to the CT contract's own `deposit` event. |
 | `app/src/lib/backup-state.ts` (redesign 2026-08-03) | `hasBackedUp(contractId)` / `markBackedUp(contractId)` — localStorage (`privacy-wallet:backed-up:<contractId>`), the flag behind `Shell`'s reminder banner. Deliberately not idb-keyval: it must be readable synchronously during render so the banner doesn't flash in. NOT proof a usable backup still exists. |
-| `app/src/App.tsx`, `app/src/main.tsx` | Route table; app bootstrap (calls `ensureBrowserBackend()` once, browser-guarded). |
+| `app/src/pages/RequireWallet.tsx` (2026-08-03) | Route guard wrapping `/wallet`. Redirects `disconnected` -> `/`, and a connected session that still can't decrypt (`!bundle`, or `bundleMismatch`) -> `/restore`. Renders a "Checking for an existing session…" state while `status` is `restoring`/`creating`/`connecting` — redirecting before the silent restore resolves would sign out every returning user. |
+| `app/src/App.tsx`, `app/src/main.tsx` | Route table (`/wallet` wrapped in `RequireWallet`); app bootstrap (calls `ensureBrowserBackend()` once, browser-guarded) and the self-hosted font imports. |
 | `app/vitest.config.ts`, `app/vitest.setup.ts` | Unit-test config: plain Node environment + `fake-indexeddb/auto` (jsdom does not implement IndexedDB). |
 | `app/src/pages/Activity.tsx` (Task 14) | The unified Activity tab: `CtProvider` + `ActivityFeed` (CT, reused unchanged) and `SppBoundaryFeed` (SPP boundary log), as two separate sections. `sessionAddress` is a pure derivation from `bundle.sppRootSecret` via `spp-signer.ts`'s `sessionKeypair` — no SPP SDK connection needed just to read the local log. |
 | `app/src/components/SppBoundaryFeed.tsx` (Task 14) | Reads `lib/spp-boundary-log.ts`'s local shield/unshield log for one `sessionAddress`; loading/empty/error states, same shape as `ActivityFeed.tsx`. |
@@ -186,6 +187,7 @@ Three additive pieces, none removing or changing either per-rail tab:
 - `SppBoundaryEvent`, `SppBoundaryEventType`, `recordSppBoundaryEvent`, `listSppBoundaryEvents` (Task 14) — `app/src/lib/spp-boundary-log.ts`
 - `SppBoundaryFeed` (default export, Task 14) — `app/src/components/SppBoundaryFeed.tsx`
 - `Activity` (default export, Task 14) — `app/src/pages/Activity.tsx`
+- `RequireWallet` (default export, 2026-08-03) — `app/src/pages/RequireWallet.tsx:34`
 
 ## Dependencies
 
@@ -292,6 +294,8 @@ manual/live verification instead (see Testing).
 - **`.cell.redacted`, not `.redacted`, when redacting a balance cell.** `.cell` sets its own paper background and is declared later in the file, so the single-class rule loses the cascade and the block renders as near-white text on near-white paper. This shipped broken once and was caught only by screenshotting the markup.
 - **Backup is no longer a gate.** `Onboarding.tsx` navigates straight to `/wallet`; the reminder lives in `Shell`'s banner and is driven by `lib/backup-state.ts`'s localStorage flag, set by a successful export (`BackupExport.tsx`) *and* by a successful restore (`RestoreBackup.tsx` — restoring proves a backup exists and its passphrase is known). The banner is not dismissible, because it is also the only entry point to `/backup-export` for an existing wallet.
 - **`resolveTransferAmount` returns bigint stroops, not a formatted string.** Changed during the redesign so `<Amount>` can do the formatting at the render edge, per `format.ts`'s own bigint-everywhere-but-the-edges convention. `ActivityFeed.test.ts` asserts the stroop values directly.
+- **`/wallet` is reachable by URL, so it cannot rely on the checks its callers do.** `CtProvider` leaves `rail` undefined and never errors when `contractId`/`bundle` is missing (`app/src/providers/CtProvider.tsx:47-51`), so every CT component sits on "Loading confidential wallet…" indefinitely — a signed-out deep link looked like a hung app. `RequireWallet` is the single guard for all three dead ends: no session, connected-but-no-bundle (which the silent-restore path in `Landing` never checked, unlike `Connect.tsx`'s `bundleMissing`), and `bundleMismatch`. Verified live: `/wallet` in a fresh browser redirects to `/`.
+
 - **Headless-Chrome screenshots of this layout are not trustworthy for overflow checks.** `--window-size` combined with `--force-device-scale-factor` renders at a stale layout width and shows phantom right-edge clipping. Measure with a real viewport instead (`document.documentElement.scrollWidth` vs `clientWidth`); at 390px the shell has zero overflowing elements.
 
 ## Testing

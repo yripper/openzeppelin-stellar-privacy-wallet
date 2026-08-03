@@ -6,6 +6,7 @@ import Onboarding from "./pages/Onboarding.js";
 import BackupExport from "./pages/BackupExport.js";
 import Connect from "./pages/Connect.js";
 import RestoreBackup from "./pages/RestoreBackup.js";
+import RequireWallet from "./pages/RequireWallet.js";
 import Shell from "./pages/Shell.js";
 
 export default function App() {
@@ -18,7 +19,14 @@ export default function App() {
           <Route path="/backup-export" element={<BackupExport />} />
           <Route path="/connect" element={<Connect />} />
           <Route path="/restore" element={<RestoreBackup />} />
-          <Route path="/wallet" element={<Shell />} />
+          <Route
+            path="/wallet"
+            element={
+              <RequireWallet>
+                <Shell />
+              </RequireWallet>
+            }
+          />
         </Routes>
       </WalletProvider>
     </BrowserRouter>
