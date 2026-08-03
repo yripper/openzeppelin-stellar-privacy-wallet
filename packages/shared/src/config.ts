@@ -22,6 +22,22 @@ export const TESTNET = {
     aspNonMembership: "CBEPJBHP6X4K7KWLRPFUGPRS3OM6HWXTWIVN3M2LCGZZHCCTHHSYAAF3",
     deploymentLedger: 3773948,
     nethermindBootnode: "https://bootnode.dev-nethermind.xyz",
+    /**
+     * Per-transaction deposit ceiling of the XLM `pool` above, in stroops
+     * (100 XLM). NOT a note denomination and not a total-balance cap — pool
+     * notes hold arbitrary amounts, and you may deposit repeatedly. It is the
+     * `maximum_deposit_amount` constructor argument Nethermind chose when they
+     * deployed this pool, enforced in `transact`:
+     * `resources/stellar-private-payments/contracts/pool/src/pool.rs:525-529`
+     * rejects `ext_amount > max` with `Error::WrongExtAmount` (code 6).
+     *
+     * The pool exposes no getter for it (`get_maximum_deposit` is private,
+     * pool.rs:659), so this is read straight from contract storage. Re-verify
+     * with a `getLedgerEntries` call on the persistent contract-data key
+     * `ScVal::Vec([Symbol("MaximumDepositAmount")])` against `pool` — verified
+     * 2026-08-03 on testnet, returned `scvU256` 1000000000.
+     */
+    maxDepositStroops: 1_000_000_000n,
   },
   ct: {
     token: "CBTEJFLW25UXIDAIWJ3KUJGI5CE2YLHM5GQM2VFU7JQZS53HE3HKGCLH",

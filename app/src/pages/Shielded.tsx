@@ -86,7 +86,11 @@ const SPP_POOL_ERRORS: Readonly<Record<number, string>> = {
   3: "The shielded pool is already initialized.",
   4: "Invalid pool configuration.",
   5: "Internal pool error (bad note-tree index).",
-  6: "Invalid transfer amount.",
+  // Also the deposit-ceiling rejection (`pool.rs:525-529` returns
+  // `WrongExtAmount` when `ext_amount > maximum_deposit_amount`), which is by
+  // far the likeliest way a user meets this code — hence naming the cap here
+  // rather than only saying "invalid".
+  6: "Invalid amount for this pool — a single deposit cannot exceed the pool's maximum (100 XLM on this deployment).",
   7: "The zero-knowledge proof for this transaction was rejected.",
   8: "This transaction was built against an outdated pool state — try again after a refresh.",
   9: "This note has already been spent (double-spend rejected).",
@@ -377,6 +381,30 @@ export default function Shielded() {
     }
   }
 
+  /**
+   * The pool caps a single deposit at `TESTNET.spp.maxDepositStroops`
+   * (`pool.rs:525-529`, `Error::WrongExtAmount`). Catching it here matters
+   * because the alternative is ~10 seconds of Groth16 proving in the browser
+   * before the contract rejects it — and the raw error, "Invalid transfer
+   * amount", says nothing about a ceiling.
+   */
+  function parseShieldAmount(input: string): bigint | undefined {
+    const stroops = parseAmount(input, "Shield");
+    if (stroops === undefined) return undefined;
+    if (stroops > TESTNET.spp.maxDepositStroops) {
+      setNotice({
+        kind: "error",
+        text:
+          `The pool accepts at most ${stroopsToXlm(TESTNET.spp.maxDepositStroops)} XLM per ` +
+          `shield — that ceiling is set in the deployed pool, not by this wallet. Shield ` +
+          `${stroopsToXlm(TESTNET.spp.maxDepositStroops)} XLM or less; you can repeat it as ` +
+          `many times as you like, and your shielded balance adds up across deposits.`,
+      });
+      return undefined;
+    }
+    return stroops;
+  }
+
   async function checkRecipient(address: string): Promise<void> {
     const trimmed = address.trim();
     if (!trimmed) return setRecipientStatus({ kind: "idle" });
@@ -469,6 +497,15 @@ export default function Shielded() {
             <strong>session account</strong> derived from your privacy bundle (the same backup file
             restores it). Funds move: wallet → session account → shielded pool, and back the same
             way. Anyone sending you a shielded payment sends to your session address below.
+          </p>
+          <p className="muted">
+            Your pool balance is a set of <strong>notes</strong> — private UTXOs. They have no fixed
+            denominations: each shield creates one note worth exactly what you shielded, and
+            spending one produces a change note. A single shield is capped at{" "}
+            {stroopsToXlm(TESTNET.spp.maxDepositStroops)} XLM by the deployed pool, but you can
+            shield repeatedly and the balance adds up. A payment proof consumes at most two notes at
+            a time, so a balance spread across many small notes is spent as a short chain of
+            transactions rather than one.
           </p>
           <dl className="details">
             <dt>Session address</dt>
@@ -616,7 +653,7 @@ export default function Shielded() {
           className="stack"
           onSubmit={(event: FormEvent) => {
             event.preventDefault();
-            const stroops = parseAmount(shieldAmount, "Shield");
+            const stroops = parseShieldAmount(shieldAmount);
             if (stroops === undefined) return;
             void run("shield", async () => {
               const result = await rail.shield(stroops);
@@ -636,7 +673,10 @@ export default function Shielded() {
             });
           }}
         >
-          <label htmlFor="sppShieldAmount">Shield XLM into the pool</label>
+          <label htmlFor="sppShieldAmount">
+            Shield XLM into the pool (max {stroopsToXlm(TESTNET.spp.maxDepositStroops)} XLM per
+            deposit, repeatable)
+          </label>
           <input
             id="sppShieldAmount"
             inputMode="decimal"

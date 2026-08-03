@@ -24,7 +24,8 @@ Cross-package config and constants for the privacy-wallet monorepo, published as
 - `TESTNET` (`packages/shared/src/config.ts:1`) — `as const` object with:
   - `rpcUrl`, `horizonUrl`, `networkPassphrase`, `nativeSac`
   - `smartAccount.{accountWasmHash, webauthnVerifierAddress, ed25519VerifierAddress, relayerUrl}`
-  - `spp.{pool, publicKeyRegistry, aspMembership, aspNonMembership, deploymentLedger, nethermindBootnode}`
+  - `spp.{pool, publicKeyRegistry, aspMembership, aspNonMembership, deploymentLedger, nethermindBootnode, maxDepositStroops}`
+    - `maxDepositStroops` (`1_000_000_000n` = 100 XLM) is the deployed XLM pool's **per-transaction deposit ceiling**, not a note denomination and not a balance cap. It is the pool's `maximum_deposit_amount` constructor argument, enforced at `resources/stellar-private-payments/contracts/pool/src/pool.rs:525-529` (`Error::WrongExtAmount`, code 6). The contract exposes no getter (`get_maximum_deposit` is private, pool.rs:659), so the value is read from persistent contract storage — re-verify with `getLedgerEntries` on the key `ScVal::Vec([Symbol("MaximumDepositAmount")])` against `spp.pool`. Verified 2026-08-03 on testnet: `scvU256` `1000000000`.
   - `ct.{token, verifier, auditor, underlying, deployedAtLedger, auditorId, addrF}` — Confidential Token contract suite on testnet; sourced from `contracts/deployments/testnet.json` (see `docs/modules/contracts.md` for the deploy/import procedure and provenance). The auditor's private key is deliberately **not** here — it lives in the repo-root `.env` as `CT_AUDITOR_SECRET_HEX`.
 - `buildCtInvokeTx(cfg, contractId, method, args)` (`packages/shared/src/ct-tx.ts:65`) — build + simulate an `AssembledTransaction` for a Confidential Token call, leaving auth entries unsigned. See [`ct-tx.md`](ct-tx.md).
 - `buildCtInvokeOp(contractId, method, args)` (`packages/shared/src/ct-tx.ts:38`) — the pure `invokeContractFunction` op behind it.
