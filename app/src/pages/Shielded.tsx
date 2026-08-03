@@ -447,7 +447,17 @@ export default function Shielded() {
   return (
     <div className="confidential stack">
       <section className="balance-card">
-        <h2>Shielded balance</h2>
+        <div className="card-header">
+          <h2>Shielded balance</h2>
+          <button
+            type="button"
+            className="btn-ghost btn-small"
+            onClick={() => void refreshAndReport()}
+            disabled={refreshing || disabled}
+          >
+            {refreshing ? "Reading…" : "Refresh"}
+          </button>
+        </div>
 
         <details className="info-tip">
           <summary>How shielded payments work</summary>
@@ -521,14 +531,6 @@ export default function Shielded() {
           </p>
         ) : null}
 
-        <button
-          type="button"
-          className="btn-ghost"
-          onClick={() => void refreshAndReport()}
-          disabled={refreshing || disabled}
-        >
-          {refreshing ? "Refreshing…" : "Refresh"}
-        </button>
       </section>
 
       <section className="send-form">
