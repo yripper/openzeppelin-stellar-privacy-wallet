@@ -18,6 +18,7 @@ import { TESTNET } from "@privacy-wallet/shared";
 
 import { useWallet } from "../providers/WalletProvider.js";
 import Amount from "../components/Amount.js";
+import PoolStats from "../components/PoolStats.js";
 import TxLink from "../components/TxLink.js";
 import { stroopsToXlm, truncateAddress, xlmToStroops } from "../lib/format.js";
 import { humanizeRelayerError } from "../lib/relayer-errors.js";
@@ -820,6 +821,8 @@ export default function Shielded() {
           </>
         ) : null}
       </section>
+
+      <PoolStats />
     </div>
   );
 }
