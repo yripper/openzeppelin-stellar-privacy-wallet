@@ -12,6 +12,11 @@
 # rely on un-ignoring a child of an ignored parent.
 resources/
 
+# dist/ (~70MB of wasm + circuit zkeys) exceeds the upload cap on its own —
+# it is committed to git and re-fetched during the Railway build instead
+# (scripts/fetch-spp-dist.mjs, first step of railway/app.json's buildCommand).
+vendor/stellar-private-payments/sdk/web/dist/
+
 vendor/stellar-private-payments/app/
 vendor/stellar-private-payments/circuit-keys/
 vendor/stellar-private-payments/circuits/
