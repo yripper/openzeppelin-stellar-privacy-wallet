@@ -36,4 +36,14 @@ export interface WalletSigner {
   signTransaction(xdr: string, opts?: SignOptions): Promise<SignTransactionResult>;
   signAuthEntry(xdr: string, opts?: SignOptions): Promise<SignAuthEntryResult>;
   getPublicKey?(): Promise<string>;
+  /**
+   * When present, takes over assembly, authorization, and submission of a
+   * prepared transaction (e.g. a smart-account wallet signing auth entries
+   * with a passkey and submitting through its own relayer). Receives the
+   * unsigned transaction envelope XDR (base64) and resolves with the
+   * submitted transaction's 64-char hex hash; the SDK's confirm loop then
+   * polls that hash. `signTransaction`/`signAuthEntry` are not called for
+   * transactions routed through this method.
+   */
+  executeTransaction?(xdr: string, opts?: SignOptions): Promise<string>;
 }

@@ -23,6 +23,13 @@ export interface AccountOptions {
   networkPassphrase: string;
   /** Optional when `signer.getPublicKey()` is implemented. */
   userAddress?: string;
+  /**
+   * Classic `G…` account that sources transaction envelopes (sequence number
+   * and fees) when `userAddress` is not a classic account — e.g. a `C…`
+   * smart account whose transactions are assembled and submitted by the
+   * signer's `executeTransaction`.
+   */
+  txSource?: string;
 }
 
 /** Options for {@link Account.pool}. */
