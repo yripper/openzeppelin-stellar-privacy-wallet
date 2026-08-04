@@ -1084,13 +1084,100 @@ mod mock_verifier {
     }
 }
 
+mod mock_vault {
+    use soroban_sdk::{Address, Env, Vec, contract, contractimpl, contracttype, token::TokenClient};
+
+    #[contracttype]
+    pub enum Key { Token, PriceBps, Shares(Address), FailDeposits, FailWithdraws }
+
+    /// Single-asset DeFindex vault stand-in. Shares are worth
+    /// `price_bps/10_000` asset units; tests simulate yield by raising the
+    /// price AND minting the matching extra assets to the vault address.
+    #[contract]
+    pub struct MockVault;
+
+    #[contractimpl]
+    impl MockVault {
+        pub fn __constructor(env: Env, token: Address) {
+            env.storage().persistent().set(&Key::Token, &token);
+            env.storage().persistent().set(&Key::PriceBps, &10_000i128);
+        }
+        pub fn set_price_bps(env: Env, bps: i128) {
+            env.storage().persistent().set(&Key::PriceBps, &bps);
+        }
+        pub fn set_fail_deposits(env: Env, fail: bool) {
+            env.storage().persistent().set(&Key::FailDeposits, &fail);
+        }
+        pub fn set_fail_withdraws(env: Env, fail: bool) {
+            env.storage().persistent().set(&Key::FailWithdraws, &fail);
+        }
+        fn price(env: &Env) -> i128 {
+            env.storage().persistent().get(&Key::PriceBps).unwrap_or(10_000)
+        }
+        fn token(env: &Env) -> Address {
+            env.storage().persistent().get(&Key::Token).unwrap()
+        }
+
+        pub fn deposit(
+            env: Env,
+            amounts_desired: Vec<i128>,
+            _amounts_min: Vec<i128>,
+            from: Address,
+            _invest: bool,
+        ) -> (Vec<i128>, i128) {
+            if env.storage().persistent().get(&Key::FailDeposits).unwrap_or(false) {
+                panic!("deposits disabled");
+            }
+            let amount = amounts_desired.get(0).unwrap();
+            TokenClient::new(&env, &Self::token(&env))
+                .transfer(&from, &env.current_contract_address(), &amount);
+            let shares = amount * 10_000 / Self::price(&env);
+            let prev: i128 = env.storage().persistent().get(&Key::Shares(from.clone())).unwrap_or(0);
+            env.storage().persistent().set(&Key::Shares(from), &(prev + shares));
+            (amounts_desired, shares)
+        }
+
+        pub fn withdraw(
+            env: Env,
+            withdraw_shares: i128,
+            min_amounts_out: Vec<i128>,
+            from: Address,
+        ) -> Vec<i128> {
+            if env.storage().persistent().get(&Key::FailWithdraws).unwrap_or(false) {
+                panic!("withdraws disabled");
+            }
+            let prev: i128 = env.storage().persistent().get(&Key::Shares(from.clone())).unwrap_or(0);
+            assert!(prev >= withdraw_shares, "insufficient shares");
+            let amount = withdraw_shares * Self::price(&env) / 10_000;
+            assert!(amount >= min_amounts_out.get(0).unwrap(), "slippage");
+            env.storage().persistent().set(&Key::Shares(from.clone()), &(prev - withdraw_shares));
+            TokenClient::new(&env, &Self::token(&env))
+                .transfer(&env.current_contract_address(), &from, &amount);
+            let mut out = Vec::new(&env);
+            out.push_back(amount);
+            out
+        }
+
+        pub fn balance(env: Env, id: Address) -> i128 {
+            env.storage().persistent().get(&Key::Shares(id)).unwrap_or(0)
+        }
+
+        pub fn get_asset_amounts_per_shares(env: Env, vault_shares: i128) -> Vec<i128> {
+            let mut out = Vec::new(&env);
+            out.push_back(vault_shares * Self::price(&env) / 10_000);
+            out
+        }
+    }
+}
+
 use soroban_sdk::token::{StellarAssetClient, TokenClient};
 
 struct YieldSetup {
     admin: Address,
     token: Address,
     token_admin: StellarAssetClient<'static>,
-    vault: Address,          // Address::generate here; real MockVault replaces it in Task 4
+    vault: Address,
+    vault_client: mock_vault::MockVaultClient<'static>,
     pool_id: Address,
     pool: PoolContractClient<'static>,
     member_root: U256,
@@ -1108,7 +1195,8 @@ fn setup_yield_pool(env: &Env) -> YieldSetup {
     let token = sac.address();
     let token_admin = StellarAssetClient::new(env, &token);
     let verifier = env.register(mock_verifier::MockVerifier, ());
-    let vault = Address::generate(env);
+    let vault = env.register(mock_vault::MockVault, (token.clone(),));
+    let vault_client = mock_vault::MockVaultClient::new(env, &vault);
     let pool_id = env.register(
         PoolContract,
         (
@@ -1125,7 +1213,18 @@ fn setup_yield_pool(env: &Env) -> YieldSetup {
     );
     let sender = Address::generate(env);
     token_admin.mint(&sender, &100_000i128);
-    YieldSetup { admin: base.admin, token, token_admin, vault, pool_id, pool, member_root, non_member_root, sender }
+    YieldSetup {
+        admin: base.admin,
+        token,
+        token_admin,
+        vault,
+        vault_client,
+        pool_id,
+        pool,
+        member_root,
+        non_member_root,
+        sender,
+    }
 }
 
 /// Successful deposit through the full transact path (MockVerifier accepts).
@@ -1197,4 +1296,37 @@ fn liabilities_track_deposits_and_withdrawals() {
     do_withdraw(&env, &s, 200, &recipient, 0x102);
     assert_eq!(s.pool.get_liabilities(), 600);
     assert_eq!(TokenClient::new(&env, &s.token).balance(&recipient), 200);
+}
+
+#[test]
+fn no_invest_below_threshold() {
+    let env = test_env();
+    let s = setup_yield_pool(&env);
+    do_deposit(&env, &s, 900, 0x200);
+    assert_eq!(s.vault_client.balance(&s.pool_id), 0);
+    assert_eq!(TokenClient::new(&env, &s.token).balance(&s.pool_id), 900);
+}
+
+#[test]
+fn invest_triggers_at_threshold_and_keeps_buffer() {
+    let env = test_env();
+    let s = setup_yield_pool(&env);
+    do_deposit(&env, &s, 600, 0x210);
+    do_deposit(&env, &s, 600, 0x211); // idle 1200 ≥ 1000 → invest 1000, keep 200
+    assert_eq!(TokenClient::new(&env, &s.token).balance(&s.pool_id), 200);
+    assert_eq!(TokenClient::new(&env, &s.token).balance(&s.vault), 1_000);
+    assert_eq!(s.vault_client.balance(&s.pool_id), 1_000); // price 1.0 → shares == assets
+    assert_eq!(s.pool.get_liabilities(), 1_200);
+}
+
+#[test]
+fn invest_failure_never_blocks_a_deposit() {
+    let env = test_env();
+    let s = setup_yield_pool(&env);
+    s.vault_client.set_fail_deposits(&true);
+    do_deposit(&env, &s, 600, 0x220);
+    do_deposit(&env, &s, 600, 0x221); // would invest, vault refuses — deposit still lands
+    assert_eq!(TokenClient::new(&env, &s.token).balance(&s.pool_id), 1_200);
+    assert_eq!(s.vault_client.balance(&s.pool_id), 0);
+    assert_eq!(s.pool.get_liabilities(), 1_200);
 }

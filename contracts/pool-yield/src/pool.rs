@@ -19,8 +19,11 @@ use crate::{
 };
 use contract_types::{Groth16Error, Groth16Proof};
 use soroban_sdk::{
-    Address, Bytes, BytesN, Env, I256, U256, Vec, contract, contractclient, contracterror,
-    contractevent, contractimpl, contracttype, crypto::bn254::Bn254Fr, token::TokenClient,
+    Address, Bytes, BytesN, Env, I256, IntoVal, Symbol, U256, Vec,
+    auth::{ContractContext, InvokerContractAuthEntry, SubContractInvocation},
+    contract, contractclient, contracterror, contractevent, contractimpl, contracttype,
+    crypto::bn254::Bn254Fr,
+    token::TokenClient,
     xdr::ToXdr,
 };
 use soroban_utils::constants::bn256_modulus;
@@ -836,8 +839,53 @@ impl PoolContract {
         env.storage().persistent().set(&DataKey::TotalLiabilities, &next);
     }
 
-    /// Batched vault investing. Real body in the invest task.
-    fn maybe_invest(_env: &Env) {}
+    /// Pre-authorize the vault's nested `token.transfer(pool → vault, amount)`
+    /// so `vault.deposit(from = pool)` can pull the funds. The vault's own
+    /// `from.require_auth()` is satisfied by direct-invoker auth.
+    fn authorize_vault_pull(env: &Env, token: &Address, vault: &Address, amount: i128) {
+        let this = env.current_contract_address();
+        env.authorize_as_current_contract(soroban_sdk::vec![
+            env,
+            InvokerContractAuthEntry::Contract(SubContractInvocation {
+                context: ContractContext {
+                    contract: token.clone(),
+                    fn_name: Symbol::new(env, "transfer"),
+                    args: soroban_sdk::vec![
+                        env,
+                        this.into_val(env),
+                        vault.into_val(env),
+                        amount.into_val(env)
+                    ],
+                },
+                sub_invocations: soroban_sdk::vec![env],
+            })
+        ]);
+    }
+
+    /// Batch-invest idle liquidity above the buffer once idle ≥ threshold.
+    /// Failures are swallowed on purpose: a vault outage must never block a
+    /// user's deposit (`try_deposit`).
+    fn maybe_invest(env: &Env) {
+        let (Ok(token), Ok(vault)) = (Self::get_token(env), Self::get_vault(env)) else {
+            return;
+        };
+        let Ok((threshold, buffer)) = Self::get_invest_params(env) else {
+            return;
+        };
+        let this = env.current_contract_address();
+        let idle = TokenClient::new(env, &token).balance(&this);
+        if idle < threshold {
+            return;
+        }
+        let amount = idle - buffer;
+        if amount <= 0 {
+            return;
+        }
+        Self::authorize_vault_pull(env, &token, &vault, amount);
+        let mut amounts = Vec::new(env);
+        amounts.push_back(amount);
+        let _ = DefindexVaultClient::new(env, &vault).try_deposit(&amounts, &amounts, &this, &true);
+    }
 
     /// Update the contract administrator
     ///
