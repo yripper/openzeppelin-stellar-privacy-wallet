@@ -103,6 +103,69 @@ reference bootnode is unusable for a different reason.
   wallet's activity feed works past the RPC's own retention window too,
   without re-deriving it from raw events client-side every time.
 
+## The SPP session signer: known limitation and the mainnet path
+
+Opening the Shielded tab creates a second account — an ed25519 `G…` "session
+signer" — and funds it from friendbot before anything can be shielded. We
+audited the vendored SPP source to understand whether that is forced by the
+protocol. It is not; it is an SDK limitation, and the friendbot step is a
+testnet stand-in for a mechanism that exists on mainnet.
+
+**What the contracts actually require.** Nothing about address type. The
+pool's `transact` accepts any `sender: Address`, requiring only
+`sender.require_auth()` before pulling the deposit via SAC transfer
+(`contracts/pool/src/pool.rs:513-533` in
+[stellar-private-payments](https://github.com/NethermindEth/stellar-private-payments));
+withdrawals pay out to any `ext_data.recipient: Address` (`pool.rs:620`); the
+public-key registry registers any `owner: Address` and stores X25519 + BN254
+keys — not an ed25519 identity — and is "not required to interact with the
+pool" per its own docs (`contracts/public-key-registry/src/lib.rs`).
+
+**What the SDK requires.** Its whole client path is ed25519-native: the user
+address is parsed as an `ed25519::PublicKey` (`sdk/stellar/src/signer.rs:221`),
+auth entries are signed as ed25519 signature maps (`signer.rs:320-338`), the
+transaction envelope needs a classic G source account with a sequence number
+(`sdk/stellar/src/tx_prepare.rs:50`), and the privacy keys (note key,
+encryption key) are derived from a 64-byte ed25519 signature over a fixed
+message (`sdk/prover/src/encryption.rs`). A passkey (WebAuthn/secp256r1)
+signature can satisfy none of these — notably, WebAuthn assertions are
+non-deterministic, so they can never be a key-derivation input. Hence the
+separate ed25519 session key (generated at onboarding, stored in the encrypted
+backup) and the `G…` account it controls.
+
+**Why friendbot, and why that's only a testnet artifact.** A `G…` account
+must exist as a ledger entry before it can hold anything: a SAC `transfer`
+cannot create one (SAC error 6, `AccountMissingError`), and a `C…` smart
+account cannot originate a classic `CreateAccount` op. Friendbot is simply
+the one account-creator available on testnet — its 10 000 XLM grant is
+friendbot's fixed amount, not our choice. On mainnet the same job is done by
+**CAP-33 sponsored reserves**: the app operator's fee account submits
+`BeginSponsoringFutureReserves(session)` → `CreateAccount(session, 0)` →
+`EndSponsoringFutureReserves`, creating the session account with **zero**
+XLM (the sponsor carries the base reserve). The user then funds deposits from
+their own smart-account balance via SAC transfer, and transaction fees ride
+the same relayer channel the CT rail already uses. No free money, no
+friendbot.
+
+**The deeper fix: no session account at all.** Because the pool is
+address-type-agnostic, a forked SDK could use the smart account itself as
+`sender`: deposits would pull straight from the smart account's balance,
+withdrawals would pay straight back to it, auth would be the same
+passkey-signed Soroban auth entries this wallet already produces for the CT
+rail, and key derivation would take deterministic bytes from the wallet's
+backup secret instead of an ed25519 signature (the SDK's 64-byte check is a
+length check; no chain-side rule cares where the bytes come from). The
+session account — and the account-creation problem with it — disappears.
+That fork is on our roadmap; the current release documents the limitation
+honestly instead of hiding it behind friendbot.
+
+**A note on privacy.** The session account is *not* a privacy feature. On
+the proposed mainnet flow it is funded from the user's own wallet, a
+trivially traceable one-hop link; the pool's privacy comes from the shielded
+set between deposit and withdrawal, not from who the depositor is. Collapsing
+the session account into the smart account loses nothing real — deposit and
+withdrawal edges are public in either design.
+
 ## Monorepo layout
 
 ```
