@@ -156,8 +156,26 @@ rail, and key derivation would take deterministic bytes from the wallet's
 backup secret instead of an ed25519 signature (the SDK's 64-byte check is a
 length check; no chain-side rule cares where the bytes come from). The
 session account — and the account-creation problem with it — disappears.
-That fork is on our roadmap; the current release documents the limitation
-honestly instead of hiding it behind friendbot.
+
+**Update (2026-08-04): we shipped that fork.** The SDK is vendored at
+`vendor/stellar-private-payments` — the commit on top of the pristine
+upstream tree is the complete change: a 116-line diff adding a
+`txSource`/identity split and an `executeTransaction` signer seam. The app
+now opens the pool as the wallet's own `C…` address; shield pulls straight
+from the smart account's public XLM (passkey-authorized), unshield pays
+straight back to it, shielded recipients are addressed by wallet `C…`
+address, and friendbot is out of the SPP flow entirely. Verified live on
+testnet (wallet `CCLBXDQJ…MGTPT3`): register
+[`d917470b…`](https://stellar.expert/explorer/testnet/tx/d917470bfbfbfa7a12dd17246523633e330b930196b2f5a4ad2b1103ac9ea76d),
+shield 5 XLM
+[`352efbca…`](https://stellar.expert/explorer/testnet/tx/352efbca9657ea08c9a180f90d0ae841b6faf9971c3b53e0da193d2d58332b3b),
+unshield 2 XLM
+[`e5e2a26a…`](https://stellar.expert/explorer/testnet/tx/e5e2a26a6d9184fbce8c6a8b0a966c8aaf260920fe6e6ac9e8af7bdc3b9e5d8b),
+shielded send 1 XLM
+[`b443e940…`](https://stellar.expert/explorer/testnet/tx/b443e9406f34170e0ac300ccec82cf4a3bcf215b7f42ccbf27d7d2f78ff49ce9)
+— public balance 10,000 → 9,997 XLM exactly, pool balance 3 XLM across 2
+notes. The paragraphs above are kept as the design rationale and as the
+no-fork alternative (CAP-33 sponsorship) for anyone using the stock SDK.
 
 **A note on privacy.** The session account is *not* a privacy feature. On
 the proposed mainnet flow it is funded from the user's own wallet, a

@@ -28,7 +28,7 @@
     "react-dom": "^19.2.8",
     "react-router": "^8.3.0",
     "smart-account-kit": "0.4.2",
-    "stellar-private-payments": "0.1.0-alpha.1"
+    "stellar-private-payments": "file:../vendor/stellar-private-payments/sdk/web"
   },
   "devDependencies": {
     "@aztec/bb.js": "0.87.0",

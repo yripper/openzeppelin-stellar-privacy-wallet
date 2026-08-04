@@ -1,12 +1,12 @@
 /**
  * The Shielded (SPP) rail's whole UI, in one tab.
  *
- * Deliberately presents ONE surface — "your shielded balance" — even though
- * three addresses are involved under the hood (smart account → session `G…`
- * account → pool notes). The session-account mechanics are explained in a
- * collapsed info disclosure and nowhere else; the actions are phrased in terms
- * the user cares about (add funds / shield / send / unshield / return to
- * wallet).
+ * One surface, one identity: the wallet's own `C…` smart account is the pool
+ * sender, the registry owner, and the withdraw recipient (the forked SDK —
+ * `vendor/stellar-private-payments` — made that possible; `spp.ts`'s module
+ * doc has the seams). Shield pulls straight from the wallet's public XLM,
+ * unshield pays straight back to it, and recipients are addressed by their
+ * wallet `C…` address. No session account, no staging steps.
  *
  * Connection state lives here rather than in a provider (unlike the CT rail's
  * `CtProvider`) because `spp.ts` already memoizes the rail page-wide — one
@@ -35,16 +35,13 @@ import {
   type SppView,
 } from "../lib/spp.js";
 
-type Action = "create-session" | "fund" | "shield" | "send" | "unshield" | "sweep" | "register";
+type Action = "shield" | "send" | "unshield" | "register";
 
 /** User-facing name per action — error copy must never leak the internal key (`"send failed: …"`). */
 const ACTION_LABELS: Record<Action, string> = {
-  "create-session": "Creating the session account",
-  fund: "Moving XLM to the shielded signer",
   shield: "Shielding",
   send: "Shielded send",
   unshield: "Unshielding",
-  sweep: "Returning session XLM to your wallet",
   register: "Enabling receiving",
 };
 
@@ -56,7 +53,7 @@ type RecipientStatus =
   | { kind: "checking" }
   | { kind: "ready"; address: string }
   | { kind: "unregistered"; synced: boolean }
-  | { kind: "not-g-address" }
+  | { kind: "not-contract" }
   | { kind: "invalid" };
 
 /**
@@ -105,8 +102,8 @@ const SPP_CONTRACT_CODE_RE = /Error\(Contract,\s*#(\d+)\)/;
 
 /**
  * Humanize a raw SPP failure message: first the pool contract's own table
- * above, then the relayer table (`moveToSession`'s SAC transfer and the
- * session account's funding step both go through `kit`/the relayer, same as
+ * above, then the relayer table (every pool write is assembled and submitted
+ * through `kit`/the relayer via the signer's `executeTransaction`, same as
  * the CT rail — see `relayer-errors.ts`'s module doc), else the original text
  * unchanged (the SDK's `pool_err_message` already does some of its own
  * humanizing for non-contract failures, e.g. ASP-sync messages).
@@ -262,7 +259,6 @@ export default function Shielded() {
   const [staleWarning, setStaleWarning] = useState<string | undefined>(undefined);
   const [progress, setProgress] = useState<string | undefined>(undefined);
 
-  const [fundAmount, setFundAmount] = useState("");
   const [shieldAmount, setShieldAmount] = useState("");
   const [sendAmount, setSendAmount] = useState("");
   const [unshieldAmount, setUnshieldAmount] = useState("");
@@ -408,8 +404,12 @@ export default function Shielded() {
   async function checkRecipient(address: string): Promise<void> {
     const trimmed = address.trim();
     if (!trimmed) return setRecipientStatus({ kind: "idle" });
-    if (StrKey.isValidContract(trimmed)) return setRecipientStatus({ kind: "not-g-address" });
-    if (!StrKey.isValidEd25519PublicKey(trimmed)) return setRecipientStatus({ kind: "invalid" });
+    // Recipients are wallet C-addresses now (the registry owner the forked SDK
+    // registers). A G-address is most likely a leftover session address from
+    // the pre-fork flow — it gets its own message rather than a generic
+    // "invalid".
+    if (StrKey.isValidEd25519PublicKey(trimmed)) return setRecipientStatus({ kind: "not-contract" });
+    if (!StrKey.isValidContract(trimmed)) return setRecipientStatus({ kind: "invalid" });
     if (!rail) return;
 
     setRecipientStatus({ kind: "checking" });
@@ -493,10 +493,13 @@ export default function Shielded() {
         <details className="info-tip">
           <summary>How shielded payments work</summary>
           <p className="muted">
-            The shielded pool signs with an Ed25519 key, so your wallet runs it through a dedicated{" "}
-            <strong>session account</strong> derived from your privacy bundle (the same backup file
-            restores it). Funds move: wallet → session account → shielded pool, and back the same
-            way. Anyone sending you a shielded payment sends to your session address below.
+            Your wallet itself is the pool identity: shielding pulls XLM straight out of your
+            wallet&apos;s public balance (your passkey authorizes it), and unshielding pays straight
+            back. Anyone sending you a shielded payment addresses your wallet address below. This
+            runs on our fork of the pool SDK — the deployed contracts accept any address; only the
+            stock SDK insisted on a separate Ed25519 account. A key derived from your encrypted
+            backup still unlocks the pool&apos;s private notes, so restoring the backup restores the
+            balance.
           </p>
           <p className="muted">
             Your pool balance is a set of <strong>notes</strong> — private UTXOs. They have no fixed
@@ -508,8 +511,8 @@ export default function Shielded() {
             transactions rather than one.
           </p>
           <dl className="details">
-            <dt>Session address</dt>
-            <dd>{rail.sessionAddress}</dd>
+            <dt>Your shielded address</dt>
+            <dd>{rail.walletAddress}</dd>
             <dt>Pool</dt>
             <dd>{TESTNET.spp.pool}</dd>
             <dt>History source</dt>
@@ -534,25 +537,16 @@ export default function Shielded() {
 
               <div className="cell">
                 <div className="cell-label">
-                  <span className="dot dot-exposed" /> Shielded signer
+                  <span className="dot dot-exposed" /> Receiving
                 </div>
-                {view.sessionExists ? (
-                  <Amount stroops={view.sessionXlm} />
-                ) : (
-                  <span className="amount">—</span>
-                )}
+                <span className="amount">{view.registered ? "On" : "Off"}</span>
                 <p className="cell-note">
-                  {view.sessionExists
-                    ? "A public funding account the pool signs from."
-                    : "Not created yet — add funds to open it."}
+                  {view.registered
+                    ? "Your keys are published — others can send you shielded payments."
+                    : "Others cannot send to you yet — enable receiving under Send."}
                 </p>
               </div>
             </div>
-            <p className="muted card-status">
-              {view.registered
-                ? "Others can send you shielded payments."
-                : "Others cannot send to you yet — enable receiving under Send."}
-            </p>
           </>
         ) : (
           <p className="muted">{refreshing ? "Reading shielded state…" : "No state yet."}</p>
@@ -597,59 +591,12 @@ export default function Shielded() {
             <p className="legend legend-exposed">
               <span className="dot dot-exposed" />
               <span>
-                <b>Both of these steps are public.</b> Moving XLM to the signer is an ordinary
-                payment, and shielding it into the pool publishes an opaque commitment — what stays
-                private is everything you do inside the pool afterwards.
+                <b>This step is public.</b> Shielding publishes that your wallet put this amount
+                into the pool — what stays private is everything you do inside the pool afterwards.
               </span>
             </p>
 
-            {view && !view.sessionExists ? (
-          <button
-            type="button"
-            disabled={disabled}
-            onClick={() =>
-              void run("create-session", async () => {
-                await rail.fundSessionFromFriendbot();
-                return { kind: "ok", text: "Session account created and funded by friendbot." };
-              })
-            }
-          >
-            {busy === "create-session" ? "Creating…" : "Create shielded session account"}
-          </button>
-        ) : null}
-
-        <form
-          className="stack"
-          onSubmit={(event: FormEvent) => {
-            event.preventDefault();
-            const stroops = parseAmount(fundAmount, "Move to shielded signer");
-            if (stroops === undefined) return;
-            void run("fund", async () => {
-              const hash = await rail.moveToSession(stroops);
-              setFundAmount("");
-              return {
-                kind: "ok",
-                text: `Moved ${stroopsToXlm(stroops)} XLM to the shielded signer —`,
-                hashes: [hash],
-              };
-            });
-          }}
-        >
-          <label htmlFor="sppFundAmount">Move public XLM from your wallet into the shielded signer</label>
-          <input
-            id="sppFundAmount"
-            inputMode="decimal"
-            placeholder="0.0000000"
-            value={fundAmount}
-            onChange={(event) => setFundAmount(event.target.value)}
-            disabled={disabled}
-          />
-          <button type="submit" disabled={disabled || !fundAmount}>
-            {busy === "fund" ? "Moving…" : "Move XLM"}
-          </button>
-        </form>
-
-        <form
+            <form
           className="stack"
           onSubmit={(event: FormEvent) => {
             event.preventDefault();
@@ -663,7 +610,7 @@ export default function Shielded() {
                 // recorded for the unified Activity view. See
                 // `spp-boundary-log.ts`'s module doc for why this can't be
                 // read back from chain/SDK state instead.
-                await recordSppBoundaryEvent(rail.sessionAddress, {
+                await recordSppBoundaryEvent(rail.walletAddress, {
                   type: "shield",
                   amount: stroops.toString(),
                   hashes: result.hashes,
@@ -674,8 +621,8 @@ export default function Shielded() {
           }}
         >
           <label htmlFor="sppShieldAmount">
-            Shield XLM into the pool (max {stroopsToXlm(TESTNET.spp.maxDepositStroops)} XLM per
-            deposit, repeatable)
+            Shield XLM from your wallet into the pool (max{" "}
+            {stroopsToXlm(TESTNET.spp.maxDepositStroops)} XLM per deposit, repeatable)
           </label>
           <input
             id="sppShieldAmount"
@@ -747,10 +694,10 @@ export default function Shielded() {
             });
           }}
         >
-          <label htmlFor="sppRecipient">Recipient shielded address</label>
+          <label htmlFor="sppRecipient">Recipient wallet address</label>
           <input
             id="sppRecipient"
-            placeholder="G…"
+            placeholder="C…"
             value={recipient}
             onChange={(event) => {
               setRecipient(event.target.value);
@@ -773,11 +720,11 @@ export default function Shielded() {
                 : " yet (the local registry is still syncing — try again shortly)."}
             </p>
           ) : null}
-          {recipientStatus.kind === "not-g-address" ? (
+          {recipientStatus.kind === "not-contract" ? (
             <p className="muted">
-              That&apos;s a smart-account address (C…). Shielded payments go to the recipient&apos;s
-              shielded session address (G…) — you&apos;ll find it under &ldquo;How shielded payments
-              work&rdquo; in their wallet.
+              That&apos;s a classic Stellar account (G…). Shielded payments go to the
+              recipient&apos;s wallet address (C…) — the same address they receive confidential
+              transfers on.
             </p>
           ) : null}
           {recipientStatus.kind === "invalid" ? (
@@ -827,7 +774,7 @@ export default function Shielded() {
               if (result.status === "ok") {
                 setUnshieldAmount("");
                 // The pool -> public-XLM boundary event, same rationale as shield above.
-                await recordSppBoundaryEvent(rail.sessionAddress, {
+                await recordSppBoundaryEvent(rail.walletAddress, {
                   type: "unshield",
                   amount: stroops.toString(),
                   hashes: result.hashes,
@@ -837,7 +784,7 @@ export default function Shielded() {
             });
           }}
         >
-          <label htmlFor="sppUnshieldAmount">Unshield back to public XLM</label>
+          <label htmlFor="sppUnshieldAmount">Unshield back to your wallet&apos;s public XLM</label>
           <input
             id="sppUnshieldAmount"
             inputMode="decimal"
@@ -856,28 +803,6 @@ export default function Shielded() {
             </span>
           </button>
             </form>
-
-            <button
-          type="button"
-          className="btn-ghost"
-          disabled={disabled}
-          onClick={() =>
-            void run("sweep", async () => {
-              const swept = await rail.sweepToWallet();
-              return swept
-                ? {
-                    kind: "ok",
-                    text: `Returned ${stroopsToXlm(swept.amount)} XLM to ${truncateAddress(
-                      rail.walletAddress
-                    )} —`,
-                    hashes: [swept.hash],
-                  }
-                : { kind: "warn", text: "Nothing above the session account's reserve to return." };
-            })
-          }
-        >
-              {busy === "sweep" ? "Returning…" : "Return session XLM to wallet"}
-            </button>
           </>
         ) : null}
       </section>

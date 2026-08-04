@@ -1,0 +1,181 @@
+use serde::{Deserialize, Serialize};
+
+/// Wrapper that carries a correlation/operation ID across the gloo-worker
+/// boundary. The worker re-attaches `correlation_id` as a tracing span field.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CorrelatedRequest<T> {
+    pub correlation_id: String,
+    pub payload: T,
+}
+
+pub use stellar_private_payments_sdk::{
+    DisclosureInputs, DisclosureInputsRequest, DisclosureProveParams, PreparedProverTx,
+    TransactRequest,
+};
+
+use stellar_private_payments_sdk::{
+    tx::flows::TransactParams,
+    types::{
+        AspMembershipSync, ContractsEventData, DisclosureReceipt, EncryptionPublicKey, Field,
+        KeyDerivationSignature, NotePublicKey, OperationalFeedItem, PortfolioBalance,
+        RecipientLookup, SyncMetadata, UserNoteSummary, UserOperation,
+    },
+};
+
+pub type Address = String;
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PublicNoteKeyPair {
+    pub public: NotePublicKey,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PublicEncryptionKeyPair {
+    pub public: EncryptionPublicKey,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UserKeys {
+    pub note_keypair: PublicNoteKeyPair,
+    pub encryption_keypair: PublicEncryptionKeyPair,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AspSecret {
+    pub membership_blinding: Field,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DisclaimerStatePayload {
+    pub disclaimer_text_md: String,
+    pub disclaimer_hash_hex: String,
+    pub accepted: bool,
+}
+
+#[allow(clippy::large_enum_variant)]
+#[derive(Debug, Serialize, Deserialize)]
+pub enum StorageWorkerRequest {
+    Ping,
+    SyncState,
+    SaveEvents(ContractsEventData),
+    SaveSyncProgress {
+        metadata: Vec<SyncMetadata>,
+        fully_indexed: bool,
+    },
+    ClearIndexingCursors,
+    DeriveSaveUserKeys(Address, KeyDerivationSignature, String),
+    DisclaimerState(Address),
+    AcceptDisclaimer(Address, String),
+    GetSetting(String),
+    SetSetting {
+        key: String,
+        value_json: String,
+    },
+    UserKeys(Address),
+    AspSecret(Address),
+    UserNotes(Address, u32),
+    PortfolioBalances(Address),
+    RecordOperation {
+        address: Address,
+        pool_contract_id: String,
+        op_type: String,
+        amount: String,
+        direction: String,
+        counterparty: Option<String>,
+        tx_hash: Option<String>,
+    },
+    ListOperations {
+        address: Address,
+        pool_contract_id: String,
+        limit: u32,
+    },
+    UnspentUserNotes {
+        user_address: Address,
+        pool_contract_id: Address,
+    },
+    PoolUserNotes {
+        user_address: Address,
+        pool_contract_id: Address,
+    },
+    RecipientLookup {
+        address: Address,
+        public_key_registry_contract_id: String,
+    },
+    OperationalFeed {
+        limit: u32,
+        asp_membership_contract_id: String,
+        public_key_registry_contract_id: String,
+    },
+    DisclosureInputs(DisclosureInputsRequest),
+    Transact(TransactRequest),
+    DeriveASPleaf(AdminASPRequest),
+    ConfigureTelemetry(WorkerTelemetryConfig),
+    DumpLogs,
+}
+
+#[allow(clippy::large_enum_variant)]
+#[derive(Debug, Serialize, Deserialize)]
+pub enum StorageWorkerResponse {
+    Pong,
+    SyncState(Vec<SyncMetadata>),
+    Saved,
+    Error(String),
+    DisclaimerState(DisclaimerStatePayload),
+    Setting(Option<String>),
+    UserKeys(Option<UserKeys>),
+    AspSecret(Option<AspSecret>),
+    UserNotes(Vec<UserNoteSummary>),
+    PortfolioBalances(Vec<PortfolioBalance>),
+    Operations(Vec<UserOperation>),
+    RecipientLookup(RecipientLookup),
+    OperationalFeed(Vec<OperationalFeedItem>),
+    AspMembershipSync(AspMembershipSync),
+    DisclosureNotes(Vec<DisclosureInputs>),
+    TransactParams(TransactParams),
+    DeriveASPleaf(Field),
+    Logs(String),
+}
+
+#[allow(clippy::large_enum_variant)]
+#[derive(Debug, Serialize, Deserialize)]
+pub enum ProverWorkerRequest {
+    Ping,
+    Transact(TransactParams),
+    Disclosure(DisclosureProveParams),
+    VerifyDisclosureProof(DisclosureReceipt, String),
+    ConfigureTelemetry(WorkerTelemetryConfig),
+    DumpLogs,
+}
+
+#[allow(clippy::large_enum_variant)]
+#[derive(Debug, Serialize, Deserialize)]
+pub enum ProverWorkerResponse {
+    Pong,
+    Error(String),
+    TransactPrepared(PreparedProverTx),
+    Disclosure(DisclosureReceipt),
+    DisclosureProofVerified(bool),
+    Logs(String),
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AdminASPRequest {
+    pub membership_blinding: Field,
+    pub pubkey: NotePublicKey,
+}
+
+/// Telemetry configuration pushed from the main thread to worker isolates.
+/// Only the knobs that make sense per-isolate: sink targets and ring-buffer
+/// sizing stay per-isolate defaults and are not broadcast.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkerTelemetryConfig {
+    pub level: String,
+    pub reveal_sensitive: bool,
+}

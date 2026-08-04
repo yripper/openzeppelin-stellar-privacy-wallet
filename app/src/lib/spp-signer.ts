@@ -59,8 +59,12 @@
  * anyway.
  */
 import { Buffer } from "buffer";
-import { Keypair, TransactionBuilder } from "@stellar/stellar-sdk";
+import { Address, Keypair, TransactionBuilder, xdr } from "@stellar/stellar-sdk";
 import type { WalletSigner } from "stellar-private-payments";
+import { TESTNET, buildCtInvokeTx } from "@privacy-wallet/shared";
+
+import { kit } from "./kit.js";
+import { humanizeError } from "./errors.js";
 
 async function sha256(bytes: Buffer): Promise<Buffer> {
   const digest = await crypto.subtle.digest("SHA-256", bytes as unknown as BufferSource);
@@ -109,6 +113,45 @@ export class SessionSigner implements WalletSigner {
   async signAuthEntry(preimageXdrBase64: string): Promise<string> {
     const digest = await sha256(Buffer.from(preimageXdrBase64, "base64"));
     return this.keypair.sign(digest).toString("base64");
+  }
+
+  /**
+   * Forked-SDK seam: assemble, passkey-sign, and submit the prepared pool
+   * invocation as the SMART ACCOUNT, returning the tx hash for the SDK's
+   * confirm loop.
+   *
+   * The forked SDK prepares `transact`/`register` with `sender`/`owner` =
+   * the wallet's `C…` address and hands the unsigned envelope here instead of
+   * the ed25519 `signAuthEntry`/`signTransaction` path (which stays in place
+   * for plain G-address signers). We deliberately discard the SDK's envelope
+   * (its `txSource` G, fees, and footprint are simulation scaffolding) and
+   * keep only the invocation triple — `kit.signAndSubmit` re-simulates from
+   * the kit's own deployer source, has the passkey sign the C-address auth
+   * entry, and routes submission through the fee-sponsoring relayer, exactly
+   * like every CT rail write (`ct.ts`'s `invoke`).
+   */
+  async executeTransaction(xdrBase64: string): Promise<string> {
+    const envelope = xdr.TransactionEnvelope.fromXDR(xdrBase64, "base64");
+    const operations = envelope.v1().tx().operations();
+    const only = operations[0];
+    if (!only || operations.length !== 1) {
+      throw new Error(`Expected a single-operation pool transaction, got ${operations.length} ops`);
+    }
+    const invocation = only.body().invokeHostFunctionOp().hostFunction().invokeContract();
+    const contractId = Address.fromScAddress(invocation.contractAddress()).toString();
+    const method = invocation.functionName().toString();
+
+    const tx = await buildCtInvokeTx(
+      { rpcUrl: TESTNET.rpcUrl, networkPassphrase: TESTNET.networkPassphrase, source: kit.deployerPublicKey },
+      contractId,
+      method,
+      invocation.args()
+    );
+    const result = await kit.signAndSubmit(tx);
+    if (!result.success) {
+      throw new Error(humanizeError(result.error));
+    }
+    return result.hash;
   }
 }
 

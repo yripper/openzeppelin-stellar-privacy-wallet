@@ -1,11 +1,23 @@
 /**
  * Shielded Pool (SPP) rail orchestrator.
  *
- * Thin glue over the `stellar-private-payments` browser SDK (Circom/Groth16
- * proving inside the SDK's own worker — no bb.js, no SharedArrayBuffer) plus
- * the session-account plumbing the SDK's G-address-only signing surface forces
- * on a passkey smart-account wallet (see `spp-signer.ts`'s module doc for the
- * full "why a session key" argument).
+ * Thin glue over OUR FORK of the `stellar-private-payments` browser SDK
+ * (vendored at `vendor/stellar-private-payments`, Circom/Groth16 proving
+ * inside the SDK's own worker — no bb.js, no SharedArrayBuffer). The fork
+ * makes the passkey smart account (`C…`) the pool identity itself — the
+ * `transact` sender, the registry owner, and the withdraw recipient — so
+ * there is NO session `G…` account, no friendbot funding, and no staging
+ * hops. Two seams carry it (see `vendor/stellar-private-payments/UPSTREAM.md`
+ * and the `feat(spp-sdk)` commits):
+ *
+ * - `AccountOptions.txSource`: the kit's deployer `G…` sources the SDK's
+ *   simulation envelopes (sequence + fees) while `userAddress` stays the
+ *   C-address identity.
+ * - `WalletSigner.executeTransaction`: the SDK hands the prepared invocation
+ *   back to `spp-signer.ts`, which rebuilds it via `buildCtInvokeTx` and runs
+ *   `kit.signAndSubmit` — passkey-signed auth entry, fee-sponsoring relayer —
+ *   exactly like every CT rail write. The session ed25519 keypair survives
+ *   ONLY as the key-derivation secret (`signMessage`), never as an account.
  *
  * ## Lifecycle
  *
@@ -14,7 +26,8 @@
  *        -> bootnodeRequired(rpcUrl, storage)          (probe, for reporting)
  *        -> Client.new({rpcUrl, storage, proverWorkerUrl, bootnodeUrl})
  *        -> client.sync()                               (full historical sync)
- *        -> client.account({networkPassphrase, userAddress: sessionG}, signer)
+ *        -> client.account({networkPassphrase, userAddress: walletC,
+ *                           txSource: kit.deployerPublicKey}, signer)
  *        -> account.pool({poolContract: TESTNET.spp.pool})
  * ```
  *
@@ -30,24 +43,18 @@
  * ## Money flow (all amounts bigint stroops, never floats)
  *
  * ```
- * smart account (C…) --kit.transfer(nativeSac)--> session (G…) --pool.deposit--> shielded
- * shielded --pool.transfer(recipient G…)--> recipient's shielded notes
- * shielded --pool.withdraw(_, session G…)--> session (G…) --SAC transfer--> smart account (C…)
+ * smart account (C…) --pool.deposit (sender = C…)--> shielded
+ * shielded --pool.transfer(recipient C…)--> recipient's shielded notes
+ * shielded --pool.withdraw(_, wallet C…)--> smart account (C…)
  * ```
  *
- * The session account is a staging address, never a place to leave funds:
- * `sweepToWallet()` returns everything above the account's own minimum
- * balance to the smart account, signed by the session key.
+ * Deposits pull straight from the smart account's public XLM (the pool's
+ * `token_client.transfer(&sender, &pool, amount)` with the passkey authorizing
+ * `sender`); withdrawals pay the smart account directly. Recipients are
+ * addressed by their wallet `C…` address, which is what `registerPublicKeys`
+ * now publishes as the registry owner.
  */
-import {
-  Address,
-  Contract,
-  Keypair,
-  TransactionBuilder,
-  nativeToScVal,
-  rpc,
-  xdr,
-} from "@stellar/stellar-sdk";
+import { rpc } from "@stellar/stellar-sdk";
 import { TESTNET } from "@privacy-wallet/shared";
 import type {
   Account,
@@ -59,7 +66,6 @@ import type {
 
 import { kit } from "./kit.js";
 import { API_URL } from "./api-url.js";
-import { humanizeRelayerError } from "./relayer-errors.js";
 import { SessionSigner, sessionKeypair } from "./spp-signer.js";
 
 /** The SDK module, loaded lazily (its wasm glue + 2 MB `.wasm` are not worth paying for until the Shielded tab opens). */
@@ -81,19 +87,6 @@ const PROVER_WORKER_PATH = "/spp/workers/prover-worker.js";
 
 /** Our api's SPP bootnode-protocol endpoint (`api/src/modules/bootnode/routes.ts`). */
 export const SPP_BOOTNODE_URL = `${API_URL}/rpc`;
-
-/**
- * Kept back when sweeping the session account: 1 XLM base reserve (2 × the
- * 0.5 XLM testnet base reserve, for an account with no subentries — the ledger
- * rejects any operation that would drop below it) + 0.5 XLM of fee headroom so
- * the account can still pay for a later withdraw/sweep.
- */
-const SESSION_RESERVE_STROOPS = 15_000_000n;
-
-/** Inclusion fee for the session-signed sweep; `prepareTransaction` adds the Soroban resource fee on top. */
-const SWEEP_INCLUSION_FEE = "100000";
-
-const STROOPS_PER_XLM = 10_000_000n;
 
 /** The SDK's in-flight progress `CustomEvent` (`sdk/web/src/client/execute/progress.rs:8`). */
 export const SPP_PROGRESS_EVENT = "stellar-private-payments:tx-progress";
@@ -157,43 +150,20 @@ export const SPP_CONNECT_PHASE_LABELS: Record<SppConnectPhase, string> = {
   "opening-pool": "Opening the XLM pool…",
 };
 
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 /** UI-ready snapshot. Every amount is stroops (bigint). */
 export interface SppView {
-  /** The `G…` session account SPP signs and settles through. */
-  sessionAddress: string;
-  /** Whether the session account exists on-chain yet (friendbot creates it). */
-  sessionExists: boolean;
-  /** Session account's public XLM, stroops. */
-  sessionXlm: bigint;
   /** Shielded balance in the XLM pool, stroops (`pool.balance()`). */
   shielded: bigint;
   /** Same figure re-derived from `account.portfolio()` — an independent cross-check on `shielded`. */
   portfolioShielded: bigint;
   /** Unspent notes backing `shielded`. */
   unspentNotes: number;
-  /** Whether this session's note/encryption keys are on the deployment registry (required to RECEIVE). */
+  /** Whether this wallet's note/encryption keys are on the deployment registry (required to RECEIVE). */
   registered: boolean;
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-const scAddress = (address: string): xdr.ScVal => new Address(address).toScVal();
-const scI128 = (amount: bigint): xdr.ScVal => nativeToScVal(amount, { type: "i128" });
-
-/**
- * Convert stroops to the XLM `number` `kit.transfer` insists on, replicating
- * its own `xlmToStroops` (`resources/smart-account-kit/src/utils.ts:92-94`,
- * `BigInt(Math.round(xlm * 10_000_000))`) and refusing anything that would not
- * round-trip exactly — so a float never silently eats or invents stroops.
- */
-export function stroopsToKitXlm(stroops: bigint): number {
-  const xlm = Number(stroops) / Number(STROOPS_PER_XLM);
-  if (BigInt(Math.round(xlm * Number(STROOPS_PER_XLM))) !== stroops) {
-    throw new Error(`Amount ${stroops} stroops cannot be represented exactly as an XLM number`);
-  }
-  return xlm;
 }
 
 /**
@@ -276,11 +246,8 @@ export class SppRail {
   readonly server: rpc.Server;
 
   private constructor(
-    /** The wallet's smart-account `C…` address — the sweep destination. */
+    /** The wallet's smart-account `C…` address — the pool identity: sender, registry owner, and withdraw recipient. */
     readonly walletAddress: string,
-    /** The `G…` session account SPP itself runs on. */
-    readonly sessionAddress: string,
-    private readonly keypair: Keypair,
     private readonly client: Client,
     private readonly account: Account,
     private readonly pool: PrivatePool,
@@ -333,48 +300,32 @@ export class SppRail {
 
     phase("deriving-keys");
     const keypair = sessionKeypair(sppRootSecret);
-    const sessionAddress = keypair.publicKey();
     const signer = new SessionSigner(keypair, TESTNET.networkPassphrase);
 
-    // Triggers the SDK's one-time `signMessage(KEY_DERIVATION_MESSAGE)` when
-    // this session's privacy keys aren't in local storage yet; deterministic,
-    // so a restored backup reproduces the same keys.
+    // The wallet's C-address is the pool identity; the kit's deployer G only
+    // sources the SDK's simulation envelopes (forked `txSource` — the actual
+    // submission is rebuilt and relayer-sponsored by `executeTransaction`).
+    // `signMessage` still signs KEY_DERIVATION_MESSAGE with the session
+    // keypair, deterministically, so the derived privacy keys are byte-for-byte
+    // the ones this wallet has always had — old notes stay spendable.
     const account = await client.account(
-      { networkPassphrase: TESTNET.networkPassphrase, userAddress: sessionAddress },
+      {
+        networkPassphrase: TESTNET.networkPassphrase,
+        userAddress: walletAddress,
+        txSource: kit.deployerPublicKey,
+      },
       signer
     );
 
     phase("opening-pool");
     const pool = await account.pool({ poolContract: TESTNET.spp.pool });
 
-    return new SppRail(
-      walletAddress,
-      sessionAddress,
-      keypair,
-      client,
-      account,
-      pool,
-      storage,
-      bootnodeWasRequired
-    );
+    return new SppRail(walletAddress, client, account, pool, storage, bootnodeWasRequired);
   }
 
   /** Catch local storage up to the chain tip (bootnode leg included when the RPC can't reach back far enough). */
   async resync(): Promise<void> {
     await this.client.sync();
-  }
-
-  /** Existence + public XLM of the session account, read straight off the ledger entry (no simulation, no funded source needed). */
-  async sessionState(): Promise<{ exists: boolean; xlm: bigint }> {
-    const ledgerKey = xdr.LedgerKey.account(
-      new xdr.LedgerKeyAccount({
-        accountId: Keypair.fromPublicKey(this.sessionAddress).xdrPublicKey(),
-      })
-    );
-    const { entries } = await this.server.getLedgerEntries(ledgerKey);
-    const entry = entries[0];
-    if (!entry) return { exists: false, xlm: 0n };
-    return { exists: true, xlm: BigInt(entry.val.account().balance().toString()) };
   }
 
   /**
@@ -389,8 +340,7 @@ export class SppRail {
   async refresh(): Promise<SppView> {
     await this.resync();
 
-    const [session, shielded, portfolio, notes, registered] = await Promise.all([
-      this.sessionState(),
+    const [shielded, portfolio, notes, registered] = await Promise.all([
       this.pool.balance(),
       this.account.portfolio(),
       this.pool.notes(),
@@ -408,9 +358,6 @@ export class SppRail {
     const noteRows = (Array.isArray(notes) ? notes : []) as Array<{ spent?: boolean }>;
 
     return {
-      sessionAddress: this.sessionAddress,
-      sessionExists: session.exists,
-      sessionXlm: session.xlm,
       shielded,
       portfolioShielded,
       unspentNotes: noteRows.filter((note) => !note.spent).length,
@@ -418,70 +365,7 @@ export class SppRail {
     };
   }
 
-  /** Create the session account on testnet (friendbot). Idempotent-ish: a second call on a live account throws, so callers check `sessionExists` first. */
-  async fundSessionFromFriendbot(): Promise<void> {
-    await this.server.fundAddress(this.sessionAddress);
-  }
-
-  /** Move public XLM from the smart account to the session account (passkey-signed, via the SAC). */
-  async moveToSession(stroops: bigint): Promise<string> {
-    const result = await kit.transfer(
-      TESTNET.nativeSac,
-      this.sessionAddress,
-      stroopsToKitXlm(stroops)
-    );
-    if (!result.success) {
-      throw new Error(humanizeRelayerError(result.error.message) ?? result.error.message);
-    }
-    return result.hash;
-  }
-
-  /**
-   * Return every session-account stroop above {@link SESSION_RESERVE_STROOPS}
-   * to the smart account, as a session-key-signed SAC `transfer` (a classic
-   * payment cannot target a `C…` contract address).
-   *
-   * @returns The submitted transfer, or `undefined` when there's nothing above the reserve to sweep.
-   */
-  async sweepToWallet(): Promise<{ hash: string; amount: bigint } | undefined> {
-    const { exists, xlm } = await this.sessionState();
-    if (!exists) return undefined;
-    const amount = xlm - SESSION_RESERVE_STROOPS;
-    if (amount <= 0n) return undefined;
-
-    const source = await this.server.getAccount(this.sessionAddress);
-    const transaction = new TransactionBuilder(source, {
-      fee: SWEEP_INCLUSION_FEE,
-      networkPassphrase: TESTNET.networkPassphrase,
-    })
-      .addOperation(
-        new Contract(TESTNET.nativeSac).call(
-          "transfer",
-          scAddress(this.sessionAddress),
-          scAddress(this.walletAddress),
-          scI128(amount)
-        )
-      )
-      .setTimeout(120)
-      .build();
-
-    // `from` IS the transaction source, so source-account authorization covers
-    // the SAC's `require_auth` — no auth entry to sign separately.
-    const prepared = await this.server.prepareTransaction(transaction);
-    prepared.sign(this.keypair);
-
-    const sent = await this.server.sendTransaction(prepared);
-    if (sent.status === "ERROR") {
-      throw new Error(`Sweep submission failed: ${JSON.stringify(sent.errorResult?.result())}`);
-    }
-    const confirmed = await this.server.pollTransaction(sent.hash);
-    if (confirmed.status !== rpc.Api.GetTransactionStatus.SUCCESS) {
-      throw new Error(`Sweep did not confirm (${confirmed.status}, hash ${sent.hash})`);
-    }
-    return { hash: sent.hash, amount };
-  }
-
-  /** Publish this session's note + encryption public keys so others can send to its `G…` address. One-shot per session account. */
+  /** Publish this wallet's note + encryption public keys so others can send to its `C…` address. One-shot per wallet. */
   async registerPublicKeys(): Promise<string> {
     return this.account.registerPublicKeys({});
   }
@@ -499,19 +383,19 @@ export class SppRail {
     );
   }
 
-  /** Public session XLM → shielded notes. */
+  /** Wallet public XLM → shielded notes. The pool pulls straight from the smart account (passkey-authorized). */
   async shield(stroops: bigint): Promise<SppExecuteResult> {
     return asExecuteResult(await this.pool.deposit(stroops));
   }
 
-  /** Shielded → another wallet's shielded notes, addressed by their session `G…` address. */
+  /** Shielded → another wallet's shielded notes, addressed by their wallet `C…` address. */
   async sendShielded(recipient: string, stroops: bigint): Promise<SppExecuteResult> {
     return asExecuteResult(await this.pool.transfer(recipient, stroops));
   }
 
-  /** Shielded → public XLM, back on this session account (then `sweepToWallet()` returns it to the smart account). */
+  /** Shielded → public XLM, paid directly back to the smart account. */
   async unshield(stroops: bigint): Promise<SppExecuteResult> {
-    return asExecuteResult(await this.pool.withdraw(stroops, this.sessionAddress));
+    return asExecuteResult(await this.pool.withdraw(stroops, this.walletAddress));
   }
 
   /**

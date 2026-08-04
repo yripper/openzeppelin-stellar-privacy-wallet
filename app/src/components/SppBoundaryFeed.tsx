@@ -6,11 +6,10 @@
  * stay hidden by design, and this component only ever reads what
  * `Shielded.tsx` chose to record.
  *
- * Takes `sessionAddress` directly rather than connecting an `SppRail`, so the
- * unified Activity tab can show this log without paying for the SPP SDK's
- * wasm/worker startup cost — the session address is a pure derivation from
- * the wallet's already-loaded privacy bundle (`spp-signer.ts`'s
- * `sessionKeypair`), not something that requires a live pool connection.
+ * Takes the wallet address directly rather than connecting an `SppRail`, so
+ * the unified Activity tab can show this log without paying for the SPP SDK's
+ * wasm/worker startup cost — since the C-signer fork the boundary log is keyed
+ * by the wallet's own `C…` address, which the Activity page already has.
  */
 import { useCallback, useEffect, useState } from "react";
 
@@ -23,7 +22,7 @@ const TYPE_LABELS: Record<SppBoundaryEvent["type"], string> = {
   unshield: "Unshield",
 };
 
-export default function SppBoundaryFeed({ sessionAddress }: { sessionAddress: string }) {
+export default function SppBoundaryFeed({ address }: { address: string }) {
   const [rows, setRows] = useState<SppBoundaryEvent[] | undefined>(undefined);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | undefined>(undefined);
@@ -32,13 +31,13 @@ export default function SppBoundaryFeed({ sessionAddress }: { sessionAddress: st
     setLoading(true);
     setError(undefined);
     try {
-      setRows(await listSppBoundaryEvents(sessionAddress));
+      setRows(await listSppBoundaryEvents(address));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setLoading(false);
     }
-  }, [sessionAddress]);
+  }, [address]);
 
   useEffect(() => {
     void load();
