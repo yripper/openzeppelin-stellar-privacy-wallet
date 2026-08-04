@@ -1402,3 +1402,83 @@ fn withdrawal_fails_when_vault_divest_fails() {
     assert_eq!(s.pool.get_liabilities(), liabilities_before);
     assert_eq!(TokenClient::new(&env, &s.token).balance(&recipient), 0);
 }
+
+/// Simulate vault yield: raise the share price and mint the backing assets.
+fn accrue_yield(env: &Env, s: &YieldSetup, bps: i128, backing: i128) {
+    s.vault_client.set_price_bps(&bps);
+    s.token_admin.mint(&s.vault, &backing);
+}
+
+#[test]
+fn surplus_is_assets_minus_liabilities() {
+    let env = test_env();
+    let s = setup_yield_pool(&env);
+    do_deposit(&env, &s, 600, 0x400);
+    do_deposit(&env, &s, 600, 0x401); // invested 1000 (1000 shares), idle 200
+    assert_eq!(s.pool.get_surplus(), 0);
+    accrue_yield(&env, &s, 10_100, 10); // shares now worth 1010
+    assert_eq!(s.pool.get_surplus(), 10);
+}
+
+#[test]
+fn collect_yield_pays_exactly_the_surplus_and_only_to_admin() {
+    let env = test_env();
+    let s = setup_yield_pool(&env);
+    do_deposit(&env, &s, 600, 0x410);
+    do_deposit(&env, &s, 600, 0x411);
+    accrue_yield(&env, &s, 10_100, 10);
+    let treasury = Address::generate(&env);
+    let paid = s.pool.collect_yield(&treasury);
+    assert_eq!(paid, 10);
+    assert_eq!(TokenClient::new(&env, &s.token).balance(&treasury), 10);
+    assert_eq!(s.pool.get_surplus(), 0);
+    // users remain whole: liabilities fully covered by idle + position
+    let recipient = Address::generate(&env);
+    do_withdraw(&env, &s, 1_200, &recipient, 0x412);
+    assert_eq!(TokenClient::new(&env, &s.token).balance(&recipient), 1_200);
+}
+
+#[test]
+fn collect_yield_with_no_surplus_pays_zero() {
+    let env = test_env();
+    let s = setup_yield_pool(&env);
+    do_deposit(&env, &s, 500, 0x420);
+    let treasury = Address::generate(&env);
+    assert_eq!(s.pool.collect_yield(&treasury), 0);
+    assert_eq!(TokenClient::new(&env, &s.token).balance(&treasury), 0);
+}
+
+#[test]
+fn update_invest_params_validates_and_applies() {
+    let env = test_env();
+    let s = setup_yield_pool(&env);
+    assert!(s.pool.try_update_invest_params(&100i128, &100i128).is_err()); // buffer ≥ threshold
+    s.pool.update_invest_params(&500i128, &100i128);
+    assert_eq!(s.pool.get_invest_params(), (500i128, 100i128));
+    do_deposit(&env, &s, 600, 0x430); // idle 600 ≥ new threshold 500 → invest 500
+    assert_eq!(TokenClient::new(&env, &s.token).balance(&s.pool_id), 100);
+    assert_eq!(s.vault_client.balance(&s.pool_id), 500);
+}
+
+#[test]
+fn collect_yield_requires_admin_auth() {
+    let env = test_env();
+    // Manual setup WITHOUT mock_all_auths: constructor via env.register is
+    // auth-free; collect_yield's require_auth then has no auth to satisfy.
+    let base = setup_test_contracts(&env);
+    let sac = env.register_stellar_asset_contract_v2(base.admin.clone());
+    let verifier = env.register(mock_verifier::MockVerifier, ());
+    let vault = env.register(mock_vault::MockVault, (sac.address(),));
+    let pool_id = env.register(
+        PoolContract,
+        (
+            base.admin.clone(), sac.address(), verifier,
+            base.asp_membership_address.clone(), base.asp_non_membership_address.clone(),
+            U256::from_u32(&env, 100_000), 4u32, policy::BLOCKLIST_BIT,
+            vault, 1_000i128, 200i128,
+        ),
+    );
+    let pool = PoolContractClient::new(&env, &pool_id);
+    let treasury = Address::generate(&env);
+    assert!(pool.try_collect_yield(&treasury).is_err());
+}

@@ -1056,4 +1056,68 @@ impl PoolContract {
         let client = ASPNonMembershipClient::new(env, &asp_address);
         Ok(client.get_root())
     }
+
+    // ========== Yield Collection ==========
+
+    /// Current value of the pool's vault position, in asset stroops.
+    fn vault_position_value(env: &Env) -> Result<i128, Error> {
+        let vault = Self::get_vault(env)?;
+        let client = DefindexVaultClient::new(env, &vault);
+        let shares = client.balance(&env.current_contract_address());
+        if shares <= 0 {
+            return Ok(0);
+        }
+        Ok(client.get_asset_amounts_per_shares(&shares).get(0).unwrap_or(0))
+    }
+
+    /// Yield accrued so far: (idle + vault position) − note liabilities, ≥ 0.
+    /// This is the ONLY amount collect_yield may ever pay out — note-backed
+    /// funds are structurally out of the admin's reach.
+    pub fn get_surplus(env: &Env) -> Result<i128, Error> {
+        let token = Self::get_token(env)?;
+        let idle = TokenClient::new(env, &token).balance(&env.current_contract_address());
+        let assets = idle
+            .checked_add(Self::vault_position_value(env)?)
+            .ok_or(Error::Overflow)?;
+        Ok((assets - Self::get_liabilities(env)?).max(0))
+    }
+
+    /// Admin-only: transfer accrued yield (the protocol fee) to `to`.
+    /// Returns the amount paid. Divests from the vault as needed; recomputes
+    /// after the divest so price rounding can never pay out of liabilities.
+    pub fn collect_yield(env: Env, to: Address) -> Result<i128, Error> {
+        Self::get_admin(&env)?.require_auth();
+        let surplus = Self::get_surplus(&env)?;
+        if surplus <= 0 {
+            return Ok(0);
+        }
+        Self::ensure_idle(&env, surplus)?;
+        let token = Self::get_token(&env)?;
+        let this = env.current_contract_address();
+        let token_client = TokenClient::new(&env, &token);
+        let pay = Self::get_surplus(&env)?.min(token_client.balance(&this));
+        if pay > 0 {
+            token_client.transfer(&this, &to, &pay);
+        }
+        Ok(pay)
+    }
+
+    /// Admin-only: retune the batching parameters.
+    pub fn update_invest_params(
+        env: Env,
+        invest_threshold: i128,
+        liquidity_buffer: i128,
+    ) -> Result<(), Error> {
+        Self::get_admin(&env)?.require_auth();
+        if invest_threshold <= 0 || liquidity_buffer < 0 || liquidity_buffer >= invest_threshold {
+            return Err(Error::InvalidInvestParams);
+        }
+        env.storage()
+            .persistent()
+            .set(&DataKey::InvestThreshold, &invest_threshold);
+        env.storage()
+            .persistent()
+            .set(&DataKey::LiquidityBuffer, &liquidity_buffer);
+        Ok(())
+    }
 }
