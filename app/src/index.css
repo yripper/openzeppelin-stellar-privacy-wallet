@@ -890,3 +890,28 @@ button:disabled {
     font-size: 16px;
   }
 }
+
+/* ---- Site footer ---------------------------------------------------------
+   Global credit line rendered on every page (App.tsx). Quiet by design:
+   ink-soft text, the GitHub mark inherits currentColor and darkens on hover. */
+
+.site-footer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 2rem 1.25rem 1.5rem;
+  color: var(--ink-soft);
+  font-size: 0.85rem;
+}
+
+.site-footer a {
+  display: inline-flex;
+  align-items: center;
+  color: var(--ink-soft);
+}
+
+.site-footer a:hover,
+.site-footer a:focus-visible {
+  color: var(--ink);
+}

@@ -1,6 +1,7 @@
 import { BrowserRouter, Route, Routes } from "react-router";
 
 import { WalletProvider } from "./providers/WalletProvider.js";
+import SiteFooter from "./components/SiteFooter.js";
 import Landing from "./pages/Landing.js";
 import Onboarding from "./pages/Onboarding.js";
 import BackupExport from "./pages/BackupExport.js";
@@ -28,6 +29,7 @@ export default function App() {
             }
           />
         </Routes>
+        <SiteFooter />
       </WalletProvider>
     </BrowserRouter>
   );
