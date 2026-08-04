@@ -17,8 +17,8 @@ Licenses:
 - GPL-3.0: see `../licenses/GPL-3.0.txt` (LGPL-3.0 requires a copy of GPL-3.0 as well)
 
 Build provenance:
-- The repository commit: e19e191ebd5e4a516c5c0f356d2d9e6584c265dd
-- Build date (UTC): 2026-08-04T12:03:42Z
+- The repository commit: f85f5daf6003f02a96cb39450c776e56413f7438
+- Build date (UTC): 2026-08-04T16:46:05Z
 - circomlib revision: 35e54ea21da3e8762557234298dbb553c175ea8d
 
 Corresponding Source / rebuild:

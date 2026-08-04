@@ -87,7 +87,7 @@ const SPP_POOL_ERRORS: Readonly<Record<number, string>> = {
   // `WrongExtAmount` when `ext_amount > maximum_deposit_amount`), which is by
   // far the likeliest way a user meets this code — hence naming the cap here
   // rather than only saying "invalid".
-  6: "Invalid amount for this pool — a single deposit cannot exceed the pool's maximum (100 XLM on this deployment).",
+  6: "Invalid amount for this pool — a single deposit cannot exceed the pool's maximum (1000 XLM on this deployment).",
   7: "The zero-knowledge proof for this transaction was rejected.",
   8: "This transaction was built against an outdated pool state — try again after a refresh.",
   9: "This note has already been spent (double-spend rejected).",
@@ -96,6 +96,20 @@ const SPP_POOL_ERRORS: Readonly<Record<number, string>> = {
   12: "Arithmetic overflow while processing this transaction.",
   13: "Invalid proof input.",
   14: "Unsupported policy configuration.",
+  // Codes 15-16 are specific to our yield fork (`contracts/pool-yield/src/pool.rs`)
+  // and don't exist in the upstream reference the rest of this table was
+  // verified against — see `docs/modules/pool-yield.md`.
+  //
+  // Admin-only misconfiguration, rejected by `__constructor`/
+  // `update_invest_params` (`pool.rs:319,1113`) — users essentially never see
+  // this code.
+  15: "The pool's invest parameters are invalid — contact the operator.",
+  // User-reachable on Withdraw: `ensure_idle` (`pool.rs:870-923`) couldn't
+  // divest enough from the DeFindex vault to cover the payout, so the
+  // withdrawal is refused rather than paid short (never paid short — see
+  // `docs/modules/pool-yield.md`'s "Invest failures are swallowed; divest
+  // failures are fatal" gotcha).
+  16: "The pool could not free enough liquidity from its yield vault to pay this withdrawal. Nothing was paid out — try again in a moment.",
 };
 
 const SPP_CONTRACT_CODE_RE = /Error\(Contract,\s*#(\d+)\)/;

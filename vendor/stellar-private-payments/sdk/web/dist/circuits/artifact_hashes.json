@@ -1,10 +1,10 @@
 {
-  "policy_tx_2_2_B": "f0d779d32b0f01797e23505cc4240f7c8c13aec162dee5981bbfc7eb1674bdf7",
-  "selectiveDisclosure_3": "d2cf92cb2baabfce9fca62433e4432b8a2838377d209ad1a125bda249822efe8",
-  "policy_tx_2_2": "3a3df7c87ace982c5be05f328baf04acecce427df2d93eec453e9d8e87469bed",
   "selectiveDisclosure_2": "84d46218bc7ef6188414c2f013f51dc7e504a3cbb781c5c8178359d3770debd5",
-  "policy_tx_2_2_AB": "5e10638fd84ea03905b5c2ce8f3f2b738a82f41a73d97ee63a0784725a4157bc",
-  "policy_tx_2_2_A": "1b7c892a0d9131928dad45789f047ec7493c6ade90b5ce0d458925d75b4947cd",
   "selectiveDisclosure_4": "16bf4e311c6ae2f9c5ea24a81a0db74d1f101d3e5d6126d6048aacdfc3c5816d",
+  "policy_tx_2_2_A": "1b7c892a0d9131928dad45789f047ec7493c6ade90b5ce0d458925d75b4947cd",
+  "selectiveDisclosure_3": "d2cf92cb2baabfce9fca62433e4432b8a2838377d209ad1a125bda249822efe8",
+  "policy_tx_2_2_AB": "5e10638fd84ea03905b5c2ce8f3f2b738a82f41a73d97ee63a0784725a4157bc",
+  "policy_tx_2_2_B": "f0d779d32b0f01797e23505cc4240f7c8c13aec162dee5981bbfc7eb1674bdf7",
+  "policy_tx_2_2": "3a3df7c87ace982c5be05f328baf04acecce427df2d93eec453e9d8e87469bed",
   "selectiveDisclosure_1": "5a50a62b6dbeeb1cecbf3f11e79025b7f6bf53c7f56ef2dfc88781ddabb411c2"
 }

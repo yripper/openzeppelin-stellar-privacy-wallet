@@ -1,0 +1,1484 @@
+use crate::{
+    Error, ExtData, PoolContract, PoolContractClient, Proof,
+    merkle_with_history::{MerkleDataKey, MerkleTreeWithHistory},
+    policy,
+};
+use asp_membership::{ASPMembership, ASPMembershipClient};
+use asp_non_membership::{ASPNonMembership, ASPNonMembershipClient};
+use circom_groth16_verifier::{CircomGroth16Verifier, Groth16Proof};
+use soroban_sdk::{
+    Address, Bytes, BytesN, Env, I256, U256, Vec,
+    crypto::bn254::{Bn254G1Affine as G1Affine, Bn254G2Affine as G2Affine},
+    testutils::Address as _,
+    xdr::ToXdr,
+};
+use soroban_utils::{constants::bn256_modulus, utils::MockToken};
+
+/// Number of levels for the ASP Membership Merkle tree in tests
+const ASP_MEMBERSHIP_LEVELS: u32 = 8;
+
+// Helper to get 32 bytes
+fn mk_bytesn32(env: &Env, fill: u8) -> BytesN<32> {
+    BytesN::from_array(env, &[fill; 32])
+}
+
+fn mk_ext_data(env: &Env, recipient: Address, ext_amount: i32) -> ExtData {
+    ExtData {
+        recipient,
+        ext_amount: I256::from_i32(env, ext_amount),
+        encrypted_output0: Bytes::new(env),
+        encrypted_output1: Bytes::new(env),
+    }
+}
+
+fn compute_ext_hash(env: &Env, ext: &ExtData) -> BytesN<32> {
+    let payload = ext.clone().to_xdr(env);
+    let digest: BytesN<32> = env.crypto().keccak256(&payload).into();
+    let digest_u256 = U256::from_be_bytes(env, &Bytes::from(digest));
+    let reduced = digest_u256.rem_euclid(&bn256_modulus(env));
+    let mut buf = [0u8; 32];
+    reduced.to_be_bytes().copy_into_slice(&mut buf);
+    BytesN::from_array(env, &buf)
+}
+
+fn register_mock_token(env: &Env) -> Address {
+    env.register(MockToken, ())
+}
+
+/// Create a mock Groth16 proof for testing
+///
+/// This creates a dummy proof with valid curve points.
+/// The actual proof validity is not checked in unit tests for now
+fn mk_mock_groth16_proof(env: &Env) -> Groth16Proof {
+    // G1 generator point
+    let g1_bytes = {
+        let mut bytes = [0u8; 64];
+        bytes[31] = 1; // x = 1 (big-endian)
+        bytes[63] = 2; // y = 2 (big-endian)
+        bytes
+    };
+
+    // G2 generator point
+    let g2_bytes = {
+        let mut bytes = [0u8; 128];
+        // Set some non-zero values for a valid-looking G2 point
+        bytes[31] = 1;
+        bytes[63] = 1;
+        bytes[95] = 1;
+        bytes[127] = 1;
+        bytes
+    };
+
+    Groth16Proof {
+        a: G1Affine::from_array(env, &g1_bytes),
+        b: G2Affine::from_array(env, &g2_bytes),
+        c: G1Affine::from_array(env, &g1_bytes),
+    }
+}
+
+/// Helper struct to hold all test setup
+struct TestSetup {
+    admin: Address,
+    token: Address,
+    verifier: Address,
+    asp_membership_address: Address,
+    asp_non_membership_address: Address,
+    asp_membership_client: ASPMembershipClient<'static>,
+    asp_non_membership_client: ASPNonMembershipClient<'static>,
+    vault: Address,
+}
+
+/// Creates and deploys all contracts needed for testing
+fn setup_test_contracts(env: &Env) -> TestSetup {
+    let admin = Address::generate(env);
+
+    // Register ASP Membership contract
+    let asp_membership_address =
+        env.register(ASPMembership, (admin.clone(), ASP_MEMBERSHIP_LEVELS));
+    let asp_membership_client = ASPMembershipClient::new(env, &asp_membership_address);
+
+    // Register ASP Non-Membership contract
+    let asp_non_membership_address = env.register(ASPNonMembership, (admin.clone(),));
+    let asp_non_membership_client = ASPNonMembershipClient::new(env, &asp_non_membership_address);
+
+    // Register CircomGroth16Verifier contract
+    let verifier_address = env.register(CircomGroth16Verifier, ());
+
+    TestSetup {
+        admin,
+        token: register_mock_token(env),
+        verifier: verifier_address,
+        asp_membership_address,
+        asp_non_membership_address,
+        asp_membership_client,
+        asp_non_membership_client,
+        vault: Address::generate(env),
+    }
+}
+
+fn register_pool(
+    env: &Env,
+    setup: &TestSetup,
+    maximum_deposit_amount: U256,
+    levels: u32,
+    policy_flags: u32,
+) -> Address {
+    env.register(
+        PoolContract,
+        (
+            setup.admin.clone(),
+            setup.token.clone(),
+            setup.verifier.clone(),
+            setup.asp_membership_address.clone(),
+            setup.asp_non_membership_address.clone(),
+            maximum_deposit_amount,
+            levels,
+            policy_flags,
+            setup.vault.clone(),
+            1_000i128,
+            200i128,
+        ),
+    )
+}
+
+fn asp_roots(setup: &TestSetup) -> (U256, U256) {
+    (
+        setup.asp_membership_client.get_root(),
+        setup.asp_non_membership_client.get_root(),
+    )
+}
+
+/// Baseline transact proof with valid pool root, ext hash, and public amount.
+fn mk_transact_proof(
+    env: &Env,
+    pool: &PoolContractClient,
+    asp_membership_root: U256,
+    asp_non_membership_root: U256,
+    nullifier: u32,
+) -> (Proof, ExtData) {
+    let root = pool.get_root();
+    let ext = mk_ext_data(env, Address::generate(env), 0);
+    let ext_hash = compute_ext_hash(env, &ext);
+    let proof = Proof {
+        proof: mk_mock_groth16_proof(env),
+        root,
+        input_nullifiers: {
+            let mut v: Vec<U256> = Vec::new(env);
+            v.push_back(U256::from_u32(env, nullifier));
+            v
+        },
+        output_commitment0: U256::from_u32(env, 0x01),
+        output_commitment1: U256::from_u32(env, 0x02),
+        public_amount: U256::from_u32(env, 0),
+        ext_data_hash: ext_hash,
+        asp_membership_root,
+        asp_non_membership_root,
+    };
+    (proof, ext)
+}
+
+fn wrong_asp_root(env: &Env) -> U256 {
+    U256::from_u32(env, 0xBAD0_BEEF)
+}
+
+#[derive(Clone, Copy, Debug)]
+enum PolicyAspRootField {
+    Membership,
+    NonMembership,
+}
+
+fn assert_policy_transact_rejects_wrong_asp_root(
+    flags: u32,
+    wrong_field: PolicyAspRootField,
+    nullifier: u32,
+) {
+    let env = test_env();
+    let setup = setup_test_contracts(&env);
+    let pool_id = register_pool(&env, &setup, U256::from_u32(&env, 1000), 3, flags);
+    let pool = PoolContractClient::new(&env, &pool_id);
+    env.mock_all_auths();
+    let sender = Address::generate(&env);
+
+    let (member_root, non_member_root) = asp_roots(&setup);
+    let wrong = wrong_asp_root(&env);
+    let (asp_membership_root, asp_non_membership_root) = match wrong_field {
+        PolicyAspRootField::Membership => (wrong, non_member_root),
+        PolicyAspRootField::NonMembership => (member_root, wrong),
+    };
+    let (proof, ext) = mk_transact_proof(
+        &env,
+        &pool,
+        asp_membership_root,
+        asp_non_membership_root,
+        nullifier,
+    );
+
+    assert!(
+        matches!(
+            pool.try_transact(&proof, &ext, &sender),
+            Err(Ok(Error::InvalidProof))
+        ),
+        "expected InvalidProof for flags={} with wrong {wrong_field:?} root",
+        flags
+    );
+}
+
+fn assert_policy_transact_skips_ignored_asp_root_validation(flags: u32, nullifier: u32) {
+    let env = test_env();
+    let setup = setup_test_contracts(&env);
+    let pool_id = register_pool(&env, &setup, U256::from_u32(&env, 1000), 3, flags);
+    let pool = PoolContractClient::new(&env, &pool_id);
+    env.mock_all_auths();
+    let sender = Address::generate(&env);
+
+    let (member_root, non_member_root) = asp_roots(&setup);
+    let non_canonical = bn256_modulus(&env);
+    let (asp_membership_root, asp_non_membership_root) = match flags {
+        0u32 => (non_canonical.clone(), non_canonical),
+        policy::ALLOWLIST_BIT => (member_root, non_canonical),
+        policy::BLOCKLIST_BIT => (non_canonical, non_member_root),
+        flags if flags == policy::ALLOWLIST_BIT | policy::BLOCKLIST_BIT => {
+            panic!("AB policy validates both ASP roots")
+        }
+        _ => panic!("unexpected policy flags in test"),
+    };
+    let (proof, ext) = mk_transact_proof(
+        &env,
+        &pool,
+        asp_membership_root,
+        asp_non_membership_root,
+        nullifier,
+    );
+
+    assert!(
+        !matches!(
+            pool.try_transact(&proof, &ext, &sender),
+            Err(Ok(Error::NonCanonicalPublicInput))
+        ),
+        "expected ASP root field to be skipped for flags={}",
+        flags
+    );
+}
+
+/// Create a test environment that disables snapshot writing under Miri.
+/// Miri's isolation mode blocks filesystem operations, which the Soroban SDK
+/// uses for test snapshots.
+fn test_env() -> Env {
+    #[cfg(miri)]
+    {
+        use soroban_sdk::testutils::EnvTestConfig;
+        Env::new_with_config(EnvTestConfig {
+            capture_snapshot_at_drop: false,
+        })
+    }
+    #[cfg(not(miri))]
+    {
+        Env::default()
+    }
+}
+
+#[test]
+fn pool_constructor_sets_state() {
+    let env = test_env();
+    let setup = setup_test_contracts(&env);
+    let max = U256::from_u32(&env, 100);
+    let levels = 8u32;
+    let pool_id = register_pool(
+        &env,
+        &setup,
+        max.clone(),
+        levels,
+        policy::ALLOWLIST_BIT | policy::BLOCKLIST_BIT,
+    );
+    let pool = PoolContractClient::new(&env, &pool_id);
+
+    let stored_admin: Address = env.as_contract(&pool_id, || {
+        env.storage()
+            .persistent()
+            .get(&crate::pool::DataKey::Admin)
+            .unwrap_or_else(|| panic!("expected admin to be stored"))
+    });
+    let stored_max: U256 = env.as_contract(&pool_id, || {
+        env.storage()
+            .persistent()
+            .get(&crate::pool::DataKey::MaximumDepositAmount)
+            .unwrap_or_else(|| panic!("expected maximum deposit amount to be stored"))
+    });
+    let has_merkle_root = env.as_contract(&pool_id, || {
+        env.storage()
+            .persistent()
+            .has(&MerkleDataKey::CurrentRootIndex)
+    });
+
+    assert_eq!(stored_admin, setup.admin);
+    assert_eq!(stored_max, max);
+    assert!(has_merkle_root);
+    let _root = pool.get_root();
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn merkle_init_only_once() {
+    let env = test_env();
+    // As MerkleTreeWithHistory is now a module
+    // We need to register the contract first to access the env.storage of a smart
+    // contract
+    let setup = setup_test_contracts(&env);
+    let max = U256::from_u32(&env, 100);
+    let levels = 8u32;
+    // First init should succeed
+    let pool_id = register_pool(
+        &env,
+        &setup,
+        max,
+        levels,
+        policy::ALLOWLIST_BIT | policy::BLOCKLIST_BIT,
+    );
+
+    env.as_contract(&pool_id, || {
+        // Second init should return AlreadyInitialized error
+        let result = MerkleTreeWithHistory::init(&env, levels);
+        assert!(result.is_err());
+    });
+}
+
+#[test]
+fn merkle_insert_updates_root_and_index() {
+    let env = test_env();
+    let setup = setup_test_contracts(&env);
+    let max = U256::from_u32(&env, 100);
+    let levels = 8u32;
+    let pool_id = register_pool(
+        &env,
+        &setup,
+        max,
+        levels,
+        policy::ALLOWLIST_BIT | policy::BLOCKLIST_BIT,
+    );
+
+    env.as_contract(&pool_id, || {
+        let leaf1 = U256::from_u32(&env, 0x01);
+        let leaf2 = U256::from_u32(&env, 0x02);
+
+        let (idx_0, idx_1) = MerkleTreeWithHistory::insert_two_leaves(&env, leaf1, leaf2)
+            .unwrap_or_else(|err| panic!("expected leaf insertion to succeed: {err:?}"));
+        assert_eq!(idx_0, 0);
+        assert_eq!(idx_1, 1);
+
+        // last root must be known
+        let root = MerkleTreeWithHistory::get_last_root(&env)
+            .unwrap_or_else(|err| panic!("expected last root to exist: {err:?}"));
+        assert!(
+            MerkleTreeWithHistory::is_known_root(&env, &root)
+                .unwrap_or_else(|err| panic!("expected root lookup to succeed: {err:?}"))
+        );
+
+        // nextIndex should now be 2 (stored in persistent storage)
+        let next: u64 = env
+            .storage()
+            .persistent()
+            .get(&MerkleDataKey::NextIndex)
+            .unwrap_or_else(|| panic!("expected next index to be stored"));
+        assert_eq!(next, 2);
+    });
+}
+
+#[test]
+fn pool_is_known_root_returns_true_for_latest_root() {
+    let env = test_env();
+    let setup = setup_test_contracts(&env);
+    let pool_id = register_pool(
+        &env,
+        &setup,
+        U256::from_u32(&env, 1000),
+        8,
+        policy::ALLOWLIST_BIT | policy::BLOCKLIST_BIT,
+    );
+    let pool = PoolContractClient::new(&env, &pool_id);
+
+    let latest_root = pool.get_root();
+
+    assert!(pool.is_known_root(&latest_root));
+}
+
+#[test]
+fn pool_is_known_root_returns_true_for_recent_historical_root() {
+    let env = test_env();
+    let setup = setup_test_contracts(&env);
+    let pool_id = register_pool(
+        &env,
+        &setup,
+        U256::from_u32(&env, 1000),
+        8,
+        policy::ALLOWLIST_BIT | policy::BLOCKLIST_BIT,
+    );
+    let pool = PoolContractClient::new(&env, &pool_id);
+
+    env.as_contract(&pool_id, || {
+        MerkleTreeWithHistory::insert_two_leaves(
+            &env,
+            U256::from_u32(&env, 1),
+            U256::from_u32(&env, 2),
+        )
+        .unwrap_or_else(|err| panic!("expected first insertion to succeed: {err:?}"));
+    });
+    let historical_root = pool.get_root();
+    env.as_contract(&pool_id, || {
+        MerkleTreeWithHistory::insert_two_leaves(
+            &env,
+            U256::from_u32(&env, 3),
+            U256::from_u32(&env, 4),
+        )
+        .unwrap_or_else(|err| panic!("expected second insertion to succeed: {err:?}"));
+    });
+
+    assert!(pool.is_known_root(&historical_root));
+}
+
+#[test]
+fn pool_is_known_root_returns_false_for_zero_root() {
+    let env = test_env();
+    let setup = setup_test_contracts(&env);
+    let pool_id = register_pool(
+        &env,
+        &setup,
+        U256::from_u32(&env, 1000),
+        8,
+        policy::ALLOWLIST_BIT | policy::BLOCKLIST_BIT,
+    );
+    let pool = PoolContractClient::new(&env, &pool_id);
+    let zero_root = U256::from_u32(&env, 0);
+
+    assert!(!pool.is_known_root(&zero_root));
+}
+
+#[cfg_attr(
+    miri,
+    ignore = "too slow under Miri: 90 Merkle insertions exceed the 6h job limit"
+)]
+#[test]
+fn pool_is_known_root_returns_false_for_evicted_root() {
+    let env = test_env();
+    let setup = setup_test_contracts(&env);
+    let pool_id = register_pool(
+        &env,
+        &setup,
+        U256::from_u32(&env, 1000),
+        8,
+        policy::ALLOWLIST_BIT | policy::BLOCKLIST_BIT,
+    );
+    let pool = PoolContractClient::new(&env, &pool_id);
+
+    env.as_contract(&pool_id, || {
+        MerkleTreeWithHistory::insert_two_leaves(
+            &env,
+            U256::from_u32(&env, 1),
+            U256::from_u32(&env, 2),
+        )
+        .unwrap_or_else(|err| panic!("expected first insertion to succeed: {err:?}"));
+    });
+    let evicted_root = pool.get_root();
+
+    for i in 0..90u32 {
+        let left = i
+            .checked_mul(2)
+            .and_then(|value| value.checked_add(3))
+            .unwrap_or_else(|| panic!("left leaf value overflow"));
+        let right = left
+            .checked_add(1)
+            .unwrap_or_else(|| panic!("right leaf value overflow"));
+        env.as_contract(&pool_id, || {
+            MerkleTreeWithHistory::insert_two_leaves(
+                &env,
+                U256::from_u32(&env, left),
+                U256::from_u32(&env, right),
+            )
+            .unwrap_or_else(|err| {
+                panic!("expected history rotation insertion to succeed: {err:?}")
+            });
+        });
+    }
+
+    assert!(!pool.is_known_root(&evicted_root));
+}
+
+#[test]
+fn merkle_insert_fails_when_full() {
+    let env = test_env();
+    let setup = setup_test_contracts(&env);
+    let max = U256::from_u32(&env, 100);
+    let levels = 1u32;
+    let pool_id = register_pool(
+        &env,
+        &setup,
+        max,
+        levels,
+        policy::ALLOWLIST_BIT | policy::BLOCKLIST_BIT,
+    );
+
+    env.as_contract(&pool_id, || {
+        let leaf1 = U256::from_u32(&env, 0x0A);
+        let leaf2 = U256::from_u32(&env, 0x0B);
+
+        // First insert should succeed
+        let result1 = MerkleTreeWithHistory::insert_two_leaves(&env, leaf1.clone(), leaf2.clone());
+        assert!(result1.is_ok());
+
+        // Second insert should fail with MerkleTreeFull error
+        let result2 = MerkleTreeWithHistory::insert_two_leaves(&env, leaf1, leaf2);
+        assert!(result2.is_err());
+    });
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn merkle_init_rejects_zero_levels() {
+    let env = test_env();
+    let setup = setup_test_contracts(&env);
+    let max = U256::from_u32(&env, 100);
+    let levels = 8u32;
+    let pool_id = register_pool(
+        &env,
+        &setup,
+        max,
+        levels,
+        policy::ALLOWLIST_BIT | policy::BLOCKLIST_BIT,
+    );
+    let levels = 0u32;
+
+    env.as_contract(&pool_id, || {
+        let result = MerkleTreeWithHistory::init(&env, levels);
+        assert!(result.is_err());
+    });
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn transact_rejects_unknown_root() {
+    let env = test_env();
+    let setup = setup_test_contracts(&env);
+    let max = U256::from_u32(&env, 1000);
+    let levels = 3u32;
+    let root = U256::from_u32(&env, 0xFF); // not a known root
+    let pool_id = register_pool(
+        &env,
+        &setup,
+        max,
+        levels,
+        policy::ALLOWLIST_BIT | policy::BLOCKLIST_BIT,
+    );
+    let pool = PoolContractClient::new(&env, &pool_id);
+
+    env.mock_all_auths();
+    let sender = Address::generate(&env);
+    let ext = mk_ext_data(&env, Address::generate(&env), 0);
+
+    // Get actual roots
+    let asp_membership_root = setup.asp_membership_client.get_root();
+    let asp_non_membership_root = setup.asp_non_membership_client.get_root();
+
+    let proof = Proof {
+        proof: mk_mock_groth16_proof(&env),
+        root,
+        input_nullifiers: {
+            let mut v: Vec<U256> = Vec::new(&env);
+            v.push_back(U256::from_u32(&env, 0xAB));
+            v
+        },
+        output_commitment0: U256::from_u32(&env, 0x01),
+        output_commitment1: U256::from_u32(&env, 0x02),
+        public_amount: U256::from_u32(&env, 0),
+        ext_data_hash: mk_bytesn32(&env, 0xEE),
+        asp_membership_root,
+        asp_non_membership_root,
+    };
+
+    assert!(pool.try_transact(&proof, &ext, &sender).is_err());
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn transact_rejects_bad_ext_hash() {
+    let env = test_env();
+    let setup = setup_test_contracts(&env);
+    let max = U256::from_u32(&env, 1000);
+    let levels = 3u32;
+    let pool_id = register_pool(
+        &env,
+        &setup,
+        max,
+        levels,
+        policy::ALLOWLIST_BIT | policy::BLOCKLIST_BIT,
+    );
+    let pool = PoolContractClient::new(&env, &pool_id);
+
+    env.mock_all_auths();
+    let sender = Address::generate(&env);
+    let root = pool.get_root();
+    let ext = mk_ext_data(&env, Address::generate(&env), 0);
+
+    // Get actual roots
+    let asp_membership_root = setup.asp_membership_client.get_root();
+    let asp_non_membership_root = setup.asp_non_membership_client.get_root();
+
+    let proof = Proof {
+        proof: mk_mock_groth16_proof(&env),
+        root,
+        input_nullifiers: {
+            let mut v: Vec<U256> = Vec::new(&env);
+            v.push_back(U256::from_u32(&env, 0xCC));
+            v
+        },
+        output_commitment0: U256::from_u32(&env, 0x03),
+        output_commitment1: U256::from_u32(&env, 0x04),
+        public_amount: U256::from_u32(&env, 0),
+        ext_data_hash: mk_bytesn32(&env, 0x99), // mismatched hash
+        asp_membership_root,
+        asp_non_membership_root,
+    };
+
+    assert!(pool.try_transact(&proof, &ext, &sender).is_err());
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn transact_rejects_bad_public_amount() {
+    let env = test_env();
+    let setup = setup_test_contracts(&env);
+    let max = U256::from_u32(&env, 1000);
+    let levels = 3u32;
+    let pool_id = register_pool(
+        &env,
+        &setup,
+        max,
+        levels,
+        policy::ALLOWLIST_BIT | policy::BLOCKLIST_BIT,
+    );
+    let pool = PoolContractClient::new(&env, &pool_id);
+
+    env.mock_all_auths();
+    let sender = Address::generate(&env);
+    let root = pool.get_root();
+    let ext = mk_ext_data(&env, Address::generate(&env), 0);
+    let ext_hash = compute_ext_hash(&env, &ext);
+
+    // Get actual roots
+    let asp_membership_root = setup.asp_membership_client.get_root();
+    let asp_non_membership_root = setup.asp_non_membership_client.get_root();
+
+    let proof = Proof {
+        proof: mk_mock_groth16_proof(&env),
+        root,
+        input_nullifiers: {
+            let mut v: Vec<U256> = Vec::new(&env);
+            v.push_back(U256::from_u32(&env, 0xDD));
+            v
+        },
+        output_commitment0: U256::from_u32(&env, 0x05),
+        output_commitment1: U256::from_u32(&env, 0x06),
+        public_amount: U256::from_u32(&env, 1), // should be 0 for ext_amount=0, fee=0
+        ext_data_hash: ext_hash,
+        asp_membership_root,
+        asp_non_membership_root,
+    };
+
+    assert!(pool.try_transact(&proof, &ext, &sender).is_err());
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn transact_rejects_non_canonical_nullifier() {
+    let env = test_env();
+    let setup = setup_test_contracts(&env);
+    let maximum_deposit_amount = U256::from_u32(&env, 1000);
+    let levels = 3u32;
+    let pool_id = register_pool(
+        &env,
+        &setup,
+        maximum_deposit_amount.clone(),
+        levels,
+        policy::ALLOWLIST_BIT | policy::BLOCKLIST_BIT,
+    );
+    let pool = PoolContractClient::new(&env, &pool_id);
+
+    env.mock_all_auths();
+    let sender = Address::generate(&env);
+    let root = pool.get_root();
+    let ext = mk_ext_data(&env, Address::generate(&env), 0);
+    let ext_hash = compute_ext_hash(&env, &ext);
+
+    let asp_membership_root = setup.asp_membership_client.get_root();
+    let asp_non_membership_root = setup.asp_non_membership_client.get_root();
+
+    let proof = Proof {
+        proof: mk_mock_groth16_proof(&env),
+        root,
+        input_nullifiers: {
+            let mut v: Vec<U256> = Vec::new(&env);
+            let non_canonical_nullifier = bn256_modulus(&env);
+            v.push_back(non_canonical_nullifier);
+            v
+        },
+        output_commitment0: U256::from_u32(&env, 0x07),
+        output_commitment1: U256::from_u32(&env, 0x08),
+        public_amount: U256::from_u32(&env, 0),
+        ext_data_hash: ext_hash,
+        asp_membership_root,
+        asp_non_membership_root,
+    };
+
+    assert!(matches!(
+        pool.try_transact(&proof, &ext, &sender),
+        Err(Ok(Error::NonCanonicalPublicInput))
+    ));
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn transact_rejects_wrong_asp_root_when_flags_require() {
+    let cases = [
+        (policy::ALLOWLIST_BIT, PolicyAspRootField::Membership, 0xB1),
+        (
+            policy::ALLOWLIST_BIT | policy::BLOCKLIST_BIT,
+            PolicyAspRootField::Membership,
+            0xB2,
+        ),
+        (
+            policy::BLOCKLIST_BIT,
+            PolicyAspRootField::NonMembership,
+            0xB3,
+        ),
+        (
+            policy::ALLOWLIST_BIT | policy::BLOCKLIST_BIT,
+            PolicyAspRootField::NonMembership,
+            0xB4,
+        ),
+    ];
+
+    for (flags, wrong_field, nullifier) in cases {
+        assert_policy_transact_rejects_wrong_asp_root(flags, wrong_field, nullifier);
+    }
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn transact_skips_asp_root_canonical_validation_when_flags_ignore_field() {
+    let cases = [
+        (0u32, 0xB5),
+        (policy::ALLOWLIST_BIT, 0xB6),
+        (policy::BLOCKLIST_BIT, 0xB7),
+    ];
+
+    for (flags, nullifier) in cases {
+        assert_policy_transact_skips_ignored_asp_root_validation(flags, nullifier);
+    }
+}
+
+#[test]
+fn get_policy_flags_returns_registered_value() {
+    let env = test_env();
+    let setup = setup_test_contracts(&env);
+    let flag_sets = [
+        0u32,
+        policy::ALLOWLIST_BIT,
+        policy::BLOCKLIST_BIT,
+        policy::ALLOWLIST_BIT | policy::BLOCKLIST_BIT,
+    ];
+
+    for flags in flag_sets {
+        let pool_id = register_pool(&env, &setup, U256::from_u32(&env, 1000), 3, flags);
+        let pool = PoolContractClient::new(&env, &pool_id);
+        assert_eq!(pool.get_policy_flags(), flags);
+    }
+}
+
+#[test]
+fn get_policy_flags_errors_when_unset() {
+    let env = test_env();
+    let setup = setup_test_contracts(&env);
+    let pool_id = register_pool(&env, &setup, U256::from_u32(&env, 1000), 3, 0u32);
+    let pool = PoolContractClient::new(&env, &pool_id);
+
+    env.as_contract(&pool_id, || {
+        env.storage()
+            .persistent()
+            .remove(&crate::pool::DataKey::PolicyFlags);
+    });
+
+    assert!(matches!(
+        pool.try_get_policy_flags(),
+        Err(Ok(Error::NotInitialized))
+    ));
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn transact_errors_when_policy_flags_unset() {
+    let env = test_env();
+    let setup = setup_test_contracts(&env);
+    let pool_id = register_pool(
+        &env,
+        &setup,
+        U256::from_u32(&env, 1000),
+        3,
+        policy::ALLOWLIST_BIT | policy::BLOCKLIST_BIT,
+    );
+    let pool = PoolContractClient::new(&env, &pool_id);
+
+    env.as_contract(&pool_id, || {
+        env.storage()
+            .persistent()
+            .remove(&crate::pool::DataKey::PolicyFlags);
+    });
+
+    env.mock_all_auths();
+    let sender = Address::generate(&env);
+    let (member_root, non_member_root) = asp_roots(&setup);
+    let (proof, ext) = mk_transact_proof(&env, &pool, member_root, non_member_root, 0xB8);
+
+    assert!(matches!(
+        pool.try_transact(&proof, &ext, &sender),
+        Err(Ok(Error::NotInitialized))
+    ));
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn transact_rejects_non_canonical_output_commitment() {
+    let env = test_env();
+    let setup = setup_test_contracts(&env);
+    let maximum_deposit_amount = U256::from_u32(&env, 1000);
+    let levels = 3u32;
+    let pool_id = register_pool(
+        &env,
+        &setup,
+        maximum_deposit_amount.clone(),
+        levels,
+        policy::ALLOWLIST_BIT | policy::BLOCKLIST_BIT,
+    );
+    let pool = PoolContractClient::new(&env, &pool_id);
+
+    env.mock_all_auths();
+    let sender = Address::generate(&env);
+    let root = pool.get_root();
+    let ext = mk_ext_data(&env, Address::generate(&env), 0);
+    let ext_hash = compute_ext_hash(&env, &ext);
+
+    let asp_membership_root = setup.asp_membership_client.get_root();
+    let asp_non_membership_root = setup.asp_non_membership_client.get_root();
+
+    let proof = Proof {
+        proof: mk_mock_groth16_proof(&env),
+        root,
+        input_nullifiers: {
+            let mut v: Vec<U256> = Vec::new(&env);
+            v.push_back(U256::from_u32(&env, 0xEE));
+            v
+        },
+        output_commitment0: bn256_modulus(&env),
+        output_commitment1: U256::from_u32(&env, 0x08),
+        public_amount: U256::from_u32(&env, 0),
+        ext_data_hash: ext_hash,
+        asp_membership_root,
+        asp_non_membership_root,
+    };
+
+    assert!(matches!(
+        pool.try_transact(&proof, &ext, &sender),
+        Err(Ok(Error::NonCanonicalPublicInput))
+    ));
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn transact_does_not_reject_boundary_canonical_public_input() {
+    let env = test_env();
+    let setup = setup_test_contracts(&env);
+    let maximum_deposit_amount = U256::from_u32(&env, 1000);
+    let levels = 3u32;
+    let pool_id = register_pool(
+        &env,
+        &setup,
+        maximum_deposit_amount.clone(),
+        levels,
+        policy::ALLOWLIST_BIT | policy::BLOCKLIST_BIT,
+    );
+    let pool = PoolContractClient::new(&env, &pool_id);
+
+    env.mock_all_auths();
+    let sender = Address::generate(&env);
+    let root = pool.get_root();
+    let ext = mk_ext_data(&env, Address::generate(&env), 0);
+    let ext_hash = compute_ext_hash(&env, &ext);
+
+    let asp_membership_root = setup.asp_membership_client.get_root();
+    let asp_non_membership_root = setup.asp_non_membership_client.get_root();
+    let one = U256::from_u32(&env, 1);
+
+    let proof = Proof {
+        proof: mk_mock_groth16_proof(&env),
+        root,
+        input_nullifiers: {
+            let mut v: Vec<U256> = Vec::new(&env);
+            let canonical_boundary_nullifier = bn256_modulus(&env).sub(&one);
+            v.push_back(canonical_boundary_nullifier);
+            v
+        },
+        output_commitment0: bn256_modulus(&env).sub(&one),
+        output_commitment1: U256::from_u32(&env, 0x08),
+        public_amount: U256::from_u32(&env, 0),
+        ext_data_hash: ext_hash,
+        asp_membership_root,
+        asp_non_membership_root,
+    };
+
+    assert!(!matches!(
+        pool.try_transact(&proof, &ext, &sender),
+        Err(Ok(Error::NonCanonicalPublicInput))
+    ));
+}
+
+#[test]
+fn is_spent_false_for_unseen_nullifier() {
+    let env = test_env();
+    let setup = setup_test_contracts(&env);
+    let pool_id = register_pool(
+        &env,
+        &setup,
+        U256::from_u32(&env, 1000),
+        3,
+        policy::ALLOWLIST_BIT | policy::BLOCKLIST_BIT,
+    );
+    let pool = PoolContractClient::new(&env, &pool_id);
+    let nullifier = U256::from_u32(&env, 0xB1);
+
+    assert!(!pool.is_spent(&nullifier));
+}
+
+#[test]
+fn is_spent_true_after_nullifier_marked() {
+    let env = test_env();
+    let setup = setup_test_contracts(&env);
+    let pool_id = register_pool(
+        &env,
+        &setup,
+        U256::from_u32(&env, 1000),
+        3,
+        policy::ALLOWLIST_BIT | policy::BLOCKLIST_BIT,
+    );
+    let pool = PoolContractClient::new(&env, &pool_id);
+    let spent = U256::from_u32(&env, 0xA1);
+    let other = U256::from_u32(&env, 0xA2);
+
+    assert!(!pool.is_spent(&spent));
+    assert!(!pool.is_spent(&other));
+
+    // mark spent
+    env.as_contract(&pool_id, || {
+        env.storage()
+            .persistent()
+            .set(&crate::pool::DataKey::Nullifier(spent.clone()), &());
+    });
+
+    assert!(pool.is_spent(&spent));
+    assert!(!pool.is_spent(&other));
+
+    // indempotency check
+    env.as_contract(&pool_id, || {
+        env.storage()
+            .persistent()
+            .set(&crate::pool::DataKey::Nullifier(spent.clone()), &());
+    });
+    assert!(pool.is_spent(&spent));
+}
+
+#[test]
+fn test_pool_events_exact_shapes() {
+    use crate::pool::{NewCommitmentEvent, NewNullifierEvent};
+    use soroban_sdk::{events::Event, testutils::Events};
+    let env = test_env();
+    let setup = setup_test_contracts(&env);
+    let contract_id = register_pool(
+        &env,
+        &setup,
+        U256::from_u32(&env, 1000),
+        3,
+        policy::ALLOWLIST_BIT | policy::BLOCKLIST_BIT,
+    );
+    let commitment = U256::from_u32(&env, 123);
+    let nullifier = U256::from_u32(&env, 456);
+    let encrypted_output = Bytes::from_array(&env, &[0u8; 120]);
+
+    env.as_contract(&contract_id, || {
+        let event1 = NewCommitmentEvent {
+            commitment: commitment.clone(),
+            index: 0,
+            encrypted_output: encrypted_output.clone(),
+        };
+        event1.publish(&env);
+
+        let event2 = NewNullifierEvent {
+            nullifier: nullifier.clone(),
+        };
+        event2.publish(&env);
+    });
+
+    let events = env.events().all();
+    assert_eq!(events.events().len(), 2);
+
+    let expected_commitment = NewCommitmentEvent {
+        commitment,
+        index: 0,
+        encrypted_output,
+    }
+    .to_xdr(&env, &contract_id);
+    assert_eq!(events.events()[0], expected_commitment);
+
+    let expected_nullifier = NewNullifierEvent { nullifier }.to_xdr(&env, &contract_id);
+    assert_eq!(events.events()[1], expected_nullifier);
+}
+
+#[test]
+fn yield_constructor_stores_vault_and_params() {
+    let env = test_env();
+    let setup = setup_test_contracts(&env);
+    let pool_id = register_pool(&env, &setup, U256::from_u32(&env, 1000), 3, policy::BLOCKLIST_BIT);
+    let pool = PoolContractClient::new(&env, &pool_id);
+    assert_eq!(pool.get_vault(), setup.vault);
+    assert_eq!(pool.get_invest_params(), (1_000i128, 200i128));
+    assert_eq!(pool.get_liabilities(), 0i128);
+}
+
+#[test]
+#[should_panic] // constructor errors abort registration: buffer == threshold is invalid
+fn yield_constructor_rejects_buffer_not_below_threshold() {
+    let env = test_env();
+    let setup = setup_test_contracts(&env);
+    env.register(
+        PoolContract,
+        (
+            setup.admin.clone(), setup.token.clone(), setup.verifier.clone(),
+            setup.asp_membership_address.clone(), setup.asp_non_membership_address.clone(),
+            U256::from_u32(&env, 1000), 3u32, policy::BLOCKLIST_BIT,
+            setup.vault.clone(), 200i128, 200i128,
+        ),
+    );
+}
+
+mod mock_verifier {
+    use contract_types::{Groth16Error, Groth16Proof};
+    use soroban_sdk::{Env, Vec, contract, contractimpl, crypto::bn254::Bn254Fr};
+
+    #[contract]
+    pub struct MockVerifier;
+
+    #[contractimpl]
+    impl MockVerifier {
+        pub fn verify(
+            _env: Env,
+            _proof: Groth16Proof,
+            _public_inputs: Vec<Bn254Fr>,
+        ) -> Result<bool, Groth16Error> {
+            Ok(true)
+        }
+    }
+}
+
+mod mock_vault {
+    use soroban_sdk::{Address, Env, Vec, contract, contractimpl, contracttype, token::TokenClient};
+
+    #[contracttype]
+    pub enum Key { Token, PriceBps, Shares(Address), FailDeposits, FailWithdraws }
+
+    /// Single-asset DeFindex vault stand-in. Shares are worth
+    /// `price_bps/10_000` asset units; tests simulate yield by raising the
+    /// price AND minting the matching extra assets to the vault address.
+    #[contract]
+    pub struct MockVault;
+
+    #[contractimpl]
+    impl MockVault {
+        pub fn __constructor(env: Env, token: Address) {
+            env.storage().persistent().set(&Key::Token, &token);
+            env.storage().persistent().set(&Key::PriceBps, &10_000i128);
+        }
+        pub fn set_price_bps(env: Env, bps: i128) {
+            env.storage().persistent().set(&Key::PriceBps, &bps);
+        }
+        pub fn set_fail_deposits(env: Env, fail: bool) {
+            env.storage().persistent().set(&Key::FailDeposits, &fail);
+        }
+        pub fn set_fail_withdraws(env: Env, fail: bool) {
+            env.storage().persistent().set(&Key::FailWithdraws, &fail);
+        }
+        fn price(env: &Env) -> i128 {
+            env.storage().persistent().get(&Key::PriceBps).unwrap_or(10_000)
+        }
+        fn token(env: &Env) -> Address {
+            env.storage().persistent().get(&Key::Token).unwrap()
+        }
+
+        pub fn deposit(
+            env: Env,
+            amounts_desired: Vec<i128>,
+            _amounts_min: Vec<i128>,
+            from: Address,
+            _invest: bool,
+        ) -> (Vec<i128>, i128) {
+            if env.storage().persistent().get(&Key::FailDeposits).unwrap_or(false) {
+                panic!("deposits disabled");
+            }
+            let amount = amounts_desired.get(0).unwrap();
+            TokenClient::new(&env, &Self::token(&env))
+                .transfer(&from, &env.current_contract_address(), &amount);
+            let shares = amount * 10_000 / Self::price(&env);
+            let prev: i128 = env.storage().persistent().get(&Key::Shares(from.clone())).unwrap_or(0);
+            env.storage().persistent().set(&Key::Shares(from), &(prev + shares));
+            (amounts_desired, shares)
+        }
+
+        pub fn withdraw(
+            env: Env,
+            withdraw_shares: i128,
+            min_amounts_out: Vec<i128>,
+            from: Address,
+        ) -> Vec<i128> {
+            if env.storage().persistent().get(&Key::FailWithdraws).unwrap_or(false) {
+                panic!("withdraws disabled");
+            }
+            let prev: i128 = env.storage().persistent().get(&Key::Shares(from.clone())).unwrap_or(0);
+            assert!(prev >= withdraw_shares, "insufficient shares");
+            let amount = withdraw_shares * Self::price(&env) / 10_000;
+            assert!(amount >= min_amounts_out.get(0).unwrap(), "slippage");
+            env.storage().persistent().set(&Key::Shares(from.clone()), &(prev - withdraw_shares));
+            TokenClient::new(&env, &Self::token(&env))
+                .transfer(&env.current_contract_address(), &from, &amount);
+            let mut out = Vec::new(&env);
+            out.push_back(amount);
+            out
+        }
+
+        pub fn balance(env: Env, id: Address) -> i128 {
+            env.storage().persistent().get(&Key::Shares(id)).unwrap_or(0)
+        }
+
+        pub fn get_asset_amounts_per_shares(env: Env, vault_shares: i128) -> Vec<i128> {
+            let mut out = Vec::new(&env);
+            out.push_back(vault_shares * Self::price(&env) / 10_000);
+            out
+        }
+    }
+}
+
+use soroban_sdk::token::{StellarAssetClient, TokenClient};
+
+struct YieldSetup {
+    admin: Address,
+    token: Address,
+    token_admin: StellarAssetClient<'static>,
+    vault: Address,
+    vault_client: mock_vault::MockVaultClient<'static>,
+    pool_id: Address,
+    pool: PoolContractClient<'static>,
+    member_root: U256,
+    non_member_root: U256,
+    sender: Address,
+}
+
+/// Pool with MockVerifier + real SAC token, threshold 1000 / buffer 200,
+/// policy BLOCKLIST_BIT (mirrors the live deployment), levels 4, sender
+/// funded with 100_000 units.
+fn setup_yield_pool(env: &Env) -> YieldSetup {
+    env.mock_all_auths();
+    let base = setup_test_contracts(env);
+    let sac = env.register_stellar_asset_contract_v2(base.admin.clone());
+    let token = sac.address();
+    let token_admin = StellarAssetClient::new(env, &token);
+    let verifier = env.register(mock_verifier::MockVerifier, ());
+    let vault = env.register(mock_vault::MockVault, (token.clone(),));
+    let vault_client = mock_vault::MockVaultClient::new(env, &vault);
+    let pool_id = env.register(
+        PoolContract,
+        (
+            base.admin.clone(), token.clone(), verifier,
+            base.asp_membership_address.clone(), base.asp_non_membership_address.clone(),
+            U256::from_u32(env, 100_000), 4u32, policy::BLOCKLIST_BIT,
+            vault.clone(), 1_000i128, 200i128,
+        ),
+    );
+    let pool = PoolContractClient::new(env, &pool_id);
+    let (member_root, non_member_root) = (
+        base.asp_membership_client.get_root(),
+        base.asp_non_membership_client.get_root(),
+    );
+    let sender = Address::generate(env);
+    token_admin.mint(&sender, &100_000i128);
+    YieldSetup {
+        admin: base.admin,
+        token,
+        token_admin,
+        vault,
+        vault_client,
+        pool_id,
+        pool,
+        member_root,
+        non_member_root,
+        sender,
+    }
+}
+
+/// Successful deposit through the full transact path (MockVerifier accepts).
+/// `nullifier` must be unique per call.
+fn do_deposit(env: &Env, s: &YieldSetup, amount: i128, nullifier: u32) {
+    let ext = ExtData {
+        recipient: s.sender.clone(),
+        ext_amount: I256::from_i128(env, amount),
+        encrypted_output0: Bytes::new(env),
+        encrypted_output1: Bytes::new(env),
+    };
+    let public_amount = U256::from_be_bytes(env, &ext.ext_amount.to_be_bytes());
+    let proof = Proof {
+        proof: mk_mock_groth16_proof(env),
+        root: s.pool.get_root(),
+        input_nullifiers: {
+            let mut v: Vec<U256> = Vec::new(env);
+            v.push_back(U256::from_u32(env, nullifier));
+            v
+        },
+        output_commitment0: U256::from_u32(env, nullifier.wrapping_mul(2)),
+        output_commitment1: U256::from_u32(env, nullifier.wrapping_mul(2) + 1),
+        public_amount,
+        ext_data_hash: compute_ext_hash(env, &ext),
+        asp_membership_root: s.member_root.clone(),
+        asp_non_membership_root: s.non_member_root.clone(),
+    };
+    s.pool.transact(&proof, &ext, &s.sender);
+}
+
+/// Successful withdrawal: public_amount = field − amount.
+fn do_withdraw(env: &Env, s: &YieldSetup, amount: i128, recipient: &Address, nullifier: u32) {
+    let ext = ExtData {
+        recipient: recipient.clone(),
+        ext_amount: I256::from_i32(env, 0).sub(&I256::from_i128(env, amount)),
+        encrypted_output0: Bytes::new(env),
+        encrypted_output1: Bytes::new(env),
+    };
+    let abs = U256::from_be_bytes(env, &I256::from_i128(env, amount).to_be_bytes());
+    let public_amount = bn256_modulus(env).sub(&abs);
+    let proof = Proof {
+        proof: mk_mock_groth16_proof(env),
+        root: s.pool.get_root(),
+        input_nullifiers: {
+            let mut v: Vec<U256> = Vec::new(env);
+            v.push_back(U256::from_u32(env, nullifier));
+            v
+        },
+        output_commitment0: U256::from_u32(env, nullifier.wrapping_mul(2)),
+        output_commitment1: U256::from_u32(env, nullifier.wrapping_mul(2) + 1),
+        public_amount,
+        ext_data_hash: compute_ext_hash(env, &ext),
+        asp_membership_root: s.member_root.clone(),
+        asp_non_membership_root: s.non_member_root.clone(),
+    };
+    s.pool.transact(&proof, &ext, recipient);
+}
+
+/// Same construction as do_withdraw but via try_transact; true if it errored.
+fn try_withdraw_expect_err(env: &Env, s: &YieldSetup, amount: i128, recipient: &Address, nullifier: u32) -> bool {
+    let ext = ExtData {
+        recipient: recipient.clone(),
+        ext_amount: I256::from_i32(env, 0).sub(&I256::from_i128(env, amount)),
+        encrypted_output0: Bytes::new(env),
+        encrypted_output1: Bytes::new(env),
+    };
+    let abs = U256::from_be_bytes(env, &I256::from_i128(env, amount).to_be_bytes());
+    let public_amount = bn256_modulus(env).sub(&abs);
+    let proof = Proof {
+        proof: mk_mock_groth16_proof(env),
+        root: s.pool.get_root(),
+        input_nullifiers: {
+            let mut v: Vec<U256> = Vec::new(env);
+            v.push_back(U256::from_u32(env, nullifier));
+            v
+        },
+        output_commitment0: U256::from_u32(env, nullifier.wrapping_mul(2)),
+        output_commitment1: U256::from_u32(env, nullifier.wrapping_mul(2) + 1),
+        public_amount,
+        ext_data_hash: compute_ext_hash(env, &ext),
+        asp_membership_root: s.member_root.clone(),
+        asp_non_membership_root: s.non_member_root.clone(),
+    };
+    s.pool.try_transact(&proof, &ext, recipient).is_err()
+}
+
+#[test]
+fn liabilities_track_deposits_and_withdrawals() {
+    let env = test_env();
+    let s = setup_yield_pool(&env);
+    do_deposit(&env, &s, 500, 0x100);
+    assert_eq!(s.pool.get_liabilities(), 500);
+    assert_eq!(TokenClient::new(&env, &s.token).balance(&s.pool_id), 500);
+    do_deposit(&env, &s, 300, 0x101);
+    assert_eq!(s.pool.get_liabilities(), 800);
+    let recipient = Address::generate(&env);
+    do_withdraw(&env, &s, 200, &recipient, 0x102);
+    assert_eq!(s.pool.get_liabilities(), 600);
+    assert_eq!(TokenClient::new(&env, &s.token).balance(&recipient), 200);
+}
+
+#[test]
+fn no_invest_below_threshold() {
+    let env = test_env();
+    let s = setup_yield_pool(&env);
+    do_deposit(&env, &s, 900, 0x200);
+    assert_eq!(s.vault_client.balance(&s.pool_id), 0);
+    assert_eq!(TokenClient::new(&env, &s.token).balance(&s.pool_id), 900);
+}
+
+#[test]
+fn invest_triggers_at_threshold_and_keeps_buffer() {
+    let env = test_env();
+    let s = setup_yield_pool(&env);
+    do_deposit(&env, &s, 600, 0x210);
+    do_deposit(&env, &s, 600, 0x211); // idle 1200 ≥ 1000 → invest 1000, keep 200
+    assert_eq!(TokenClient::new(&env, &s.token).balance(&s.pool_id), 200);
+    assert_eq!(TokenClient::new(&env, &s.token).balance(&s.vault), 1_000);
+    assert_eq!(s.vault_client.balance(&s.pool_id), 1_000); // price 1.0 → shares == assets
+    assert_eq!(s.pool.get_liabilities(), 1_200);
+}
+
+#[test]
+fn invest_failure_never_blocks_a_deposit() {
+    let env = test_env();
+    let s = setup_yield_pool(&env);
+    s.vault_client.set_fail_deposits(&true);
+    do_deposit(&env, &s, 600, 0x220);
+    do_deposit(&env, &s, 600, 0x221); // would invest, vault refuses — deposit still lands
+    assert_eq!(TokenClient::new(&env, &s.token).balance(&s.pool_id), 1_200);
+    assert_eq!(s.vault_client.balance(&s.pool_id), 0);
+    assert_eq!(s.pool.get_liabilities(), 1_200);
+}
+
+#[test]
+fn withdrawal_within_buffer_never_touches_vault() {
+    let env = test_env();
+    let s = setup_yield_pool(&env);
+    do_deposit(&env, &s, 600, 0x300);
+    do_deposit(&env, &s, 600, 0x301); // invested 1000, idle 200
+    let shares_before = s.vault_client.balance(&s.pool_id);
+    let recipient = Address::generate(&env);
+    do_withdraw(&env, &s, 150, &recipient, 0x302);
+    assert_eq!(s.vault_client.balance(&s.pool_id), shares_before);
+    assert_eq!(TokenClient::new(&env, &s.token).balance(&recipient), 150);
+    assert_eq!(TokenClient::new(&env, &s.token).balance(&s.pool_id), 50);
+}
+
+#[test]
+fn withdrawal_beyond_idle_divests_and_refills_buffer() {
+    let env = test_env();
+    let s = setup_yield_pool(&env);
+    do_deposit(&env, &s, 600, 0x310);
+    do_deposit(&env, &s, 600, 0x311); // invested 1000, idle 200
+    let recipient = Address::generate(&env);
+    do_withdraw(&env, &s, 500, &recipient, 0x312);
+    // deficit 300 + buffer 200 = 500 divested → idle after payout = 200
+    assert_eq!(TokenClient::new(&env, &s.token).balance(&recipient), 500);
+    assert_eq!(TokenClient::new(&env, &s.token).balance(&s.pool_id), 200);
+    assert_eq!(s.vault_client.balance(&s.pool_id), 500);
+    assert_eq!(s.pool.get_liabilities(), 700);
+}
+
+#[test]
+fn withdrawal_fails_when_vault_divest_fails() {
+    let env = test_env();
+    let s = setup_yield_pool(&env);
+    do_deposit(&env, &s, 600, 0x320);
+    do_deposit(&env, &s, 600, 0x321);
+    s.vault_client.set_fail_withdraws(&true);
+    let recipient = Address::generate(&env);
+    let liabilities_before = s.pool.get_liabilities();
+    let res = try_withdraw_expect_err(&env, &s, 500, &recipient, 0x322);
+    assert!(res); // errored
+    assert_eq!(s.pool.get_liabilities(), liabilities_before);
+    assert_eq!(TokenClient::new(&env, &s.token).balance(&recipient), 0);
+}
+
+/// Simulate vault yield: raise the share price and mint the backing assets.
+fn accrue_yield(env: &Env, s: &YieldSetup, bps: i128, backing: i128) {
+    s.vault_client.set_price_bps(&bps);
+    s.token_admin.mint(&s.vault, &backing);
+}
+
+#[test]
+fn surplus_is_assets_minus_liabilities() {
+    let env = test_env();
+    let s = setup_yield_pool(&env);
+    do_deposit(&env, &s, 600, 0x400);
+    do_deposit(&env, &s, 600, 0x401); // invested 1000 (1000 shares), idle 200
+    assert_eq!(s.pool.get_surplus(), 0);
+    accrue_yield(&env, &s, 10_100, 10); // shares now worth 1010
+    assert_eq!(s.pool.get_surplus(), 10);
+}
+
+#[test]
+fn collect_yield_pays_exactly_the_surplus_and_only_to_admin() {
+    let env = test_env();
+    let s = setup_yield_pool(&env);
+    do_deposit(&env, &s, 600, 0x410);
+    do_deposit(&env, &s, 600, 0x411);
+    accrue_yield(&env, &s, 10_100, 10);
+    let treasury = Address::generate(&env);
+    let paid = s.pool.collect_yield(&treasury);
+    assert_eq!(paid, 10);
+    assert_eq!(TokenClient::new(&env, &s.token).balance(&treasury), 10);
+    assert_eq!(s.pool.get_surplus(), 0);
+    // users remain whole: liabilities fully covered by idle + position
+    let recipient = Address::generate(&env);
+    do_withdraw(&env, &s, 1_200, &recipient, 0x412);
+    assert_eq!(TokenClient::new(&env, &s.token).balance(&recipient), 1_200);
+}
+
+#[test]
+fn collect_yield_with_no_surplus_pays_zero() {
+    let env = test_env();
+    let s = setup_yield_pool(&env);
+    do_deposit(&env, &s, 500, 0x420);
+    let treasury = Address::generate(&env);
+    assert_eq!(s.pool.collect_yield(&treasury), 0);
+    assert_eq!(TokenClient::new(&env, &s.token).balance(&treasury), 0);
+}
+
+#[test]
+fn update_invest_params_validates_and_applies() {
+    let env = test_env();
+    let s = setup_yield_pool(&env);
+    assert!(s.pool.try_update_invest_params(&100i128, &100i128).is_err()); // buffer ≥ threshold
+    s.pool.update_invest_params(&500i128, &100i128);
+    assert_eq!(s.pool.get_invest_params(), (500i128, 100i128));
+    do_deposit(&env, &s, 600, 0x430); // idle 600 ≥ new threshold 500 → invest 500
+    assert_eq!(TokenClient::new(&env, &s.token).balance(&s.pool_id), 100);
+    assert_eq!(s.vault_client.balance(&s.pool_id), 500);
+}
+
+#[test]
+fn collect_yield_requires_admin_auth() {
+    let env = test_env();
+    // Manual setup WITHOUT mock_all_auths: constructor via env.register is
+    // auth-free; collect_yield's require_auth then has no auth to satisfy.
+    let base = setup_test_contracts(&env);
+    let sac = env.register_stellar_asset_contract_v2(base.admin.clone());
+    let verifier = env.register(mock_verifier::MockVerifier, ());
+    let vault = env.register(mock_vault::MockVault, (sac.address(),));
+    let pool_id = env.register(
+        PoolContract,
+        (
+            base.admin.clone(), sac.address(), verifier,
+            base.asp_membership_address.clone(), base.asp_non_membership_address.clone(),
+            U256::from_u32(&env, 100_000), 4u32, policy::BLOCKLIST_BIT,
+            vault, 1_000i128, 200i128,
+        ),
+    );
+    let pool = PoolContractClient::new(&env, &pool_id);
+    let treasury = Address::generate(&env);
+    assert!(pool.try_collect_yield(&treasury).is_err());
+}

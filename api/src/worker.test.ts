@@ -70,8 +70,9 @@ function loadCtRegisterFixture(): RawEvent {
 }
 
 describe("buildSppContractIds / buildSppStreamKey", () => {
-  it("returns the SDK's full 4-contract sync set: pool, poolEurc, aspMembership, publicKeyRegistry", () => {
+  it("returns the SDK's full 5-contract sync set: pool, poolLegacy, poolEurc, aspMembership, publicKeyRegistry", () => {
     expect(buildSppContractIds()).toEqual([
+      "CC3AVJZR5MSOLLNNP7DYSG3KR7MTBE4N4VMAT5ZX4NWIJTQL75RNI3F5",
       "CAWCZ6EO4PM5EZOH5K7XSW3R46DGLOT3XSEH36OA5EOZUSJ5XS7BX6XI",
       "CAJJT5YV4BMFTHEOO5FGO2G56TEJKM4G4FW7FS4DYBLLLLHSAYUZWT74",
       "CDEFDJPNVWDWUUHGHGGZ56FEPSSJHQLGRKS6OWIRKGRYRWSBNMLW7J5K",

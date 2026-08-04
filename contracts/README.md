@@ -1,9 +1,11 @@
 # contracts/
 
 Deployment records for the Confidential Token (CT) contract suite this
-monorepo consumes on Stellar testnet. This directory holds **only the
-deployment artifact** (`deployments/testnet.json`) — the Soroban contract
-source and WASM live upstream (see Provenance) and are not vendored here.
+monorepo consumes on Stellar testnet, plus the source and deployment
+record for the `pool-yield` contract (see below). The CT suite's
+directory holds **only the deployment artifact**
+(`deployments/testnet.json`) — the Soroban contract source and WASM live
+upstream (see Provenance) and are not vendored here.
 
 ## Provenance
 
@@ -112,3 +114,93 @@ stellar contract invoke --id <auditor> \
   --source-account GALAXYVOIDAOPZTDLHILAJQKCVVFMD4IKLXLSZV5YHO7VY74IWZILUTO \
   --network testnet --send no -- get_key --auditor_id 0
 ```
+
+## pool-yield (yield-bearing SPP pool)
+
+A yield-bearing variant of the Shielded Pool Protocol (SPP) pool contract:
+source lives at `contracts/pool-yield/` and is fork provenance — a
+verbatim copy of the vendored upstream pool
+(`vendor/stellar-private-payments/contracts/pool`) plus an added
+invest/divest/liability accounting layer (deposits above a threshold are
+invested into a DeFindex vault; `get_surplus`/`collect_yield` let the
+admin skim yield above the pool's liability floor). Unlike the CT suite
+above, this contract's Rust source **is** vendored in this repo (not an
+external reference clone), so `contracts/pool-yield/` is built and
+deployed directly from here.
+
+Deployment record: `deployments/pool-yield-testnet.json`.
+
+The reused SPP shared infrastructure — the ZK verifier and the two ASP
+(Association Set Provider) roots — is **not** a fresh deploy of this
+task; it points at **Nethermind's existing testnet deployment** of those
+contracts. The ASP addresses match `packages/shared/src/config.ts`'s
+`TESTNET.spp` block exactly (`aspMembership`/`aspNonMembership`,
+`config.ts:21-22`); the verifier address
+(`CCNOLQUUPEZTPNZ7LMS3PYE5NVYNNTKTHJP7HDK4NJMH4JPKFP7HOHD4`) is
+Nethermind's policy-suffix-"B" (blocklist) verifier, recorded upstream at
+`vendor/stellar-private-payments/deployments/testnet/deployments.json:8`
+but not currently surfaced in `config.ts`. The `token` argument is the
+same native XLM SAC as the CT suite's `underlying` address above
+(`CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC`).
+
+### Build
+
+```bash
+cd contracts/pool-yield
+VERIFIER_VK_JSON=<repo>/vendor/stellar-private-payments/testdata/selectiveDisclosure_1_vk.json \
+  stellar contract build
+```
+
+`VERIFIER_VK_JSON` must point at a verification-key JSON file — the
+build script embeds it into the compiled WASM; without it the build
+fails. Produces `target/wasm32v1-none/release/pool_yield.wasm`.
+
+### Deploy
+
+Deployer identity: the `admin` Stellar CLI key (same identity that
+deployed the CT suite above; `stellar keys address admin` prints its
+G-address, `stellar keys fund admin --network testnet` tops it up if
+unfunded).
+
+```bash
+cd contracts/pool-yield
+stellar contract deploy \
+  --wasm target/wasm32v1-none/release/pool_yield.wasm \
+  --source-account admin --network testnet \
+  -- \
+  --admin "$(stellar keys address admin)" \
+  --token CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC \
+  --verifier CCNOLQUUPEZTPNZ7LMS3PYE5NVYNNTKTHJP7HDK4NJMH4JPKFP7HOHD4 \
+  --asp_membership CDEFDJPNVWDWUUHGHGGZ56FEPSSJHQLGRKS6OWIRKGRYRWSBNMLW7J5K \
+  --asp_non_membership CBEPJBHP6X4K7KWLRPFUGPRS3OM6HWXTWIVN3M2LCGZZHCCTHHSYAAF3 \
+  --maximum_deposit_amount 10000000000 \
+  --levels 10 \
+  --policy_flags 2 \
+  --vault CAGNH456FTTMWEL26K7CGNVQABPB3SA5AV2YXU4R3XKUODEVU65ZN7Q7 \
+  --invest_threshold 10000000000 \
+  --liquidity_buffer 2000000000
+```
+
+`--levels 10` was verified against the live upstream pool
+(`CAWCZ6EO4PM5EZOH5K7XSW3R46DGLOT3XSEH36OA5EOZUSJ5XS7BX6XI`, the `spp.pool`
+address in `config.ts`) before deploying, by reading its persistent
+contract-data entry keyed `ScVal::Vec([Symbol("Levels")])` — returned
+`scvU32 10`, confirming the merkle tree depth used across the wallet's
+SPP integration is safe to reuse here.
+
+### Smoke test
+
+```bash
+stellar contract invoke --id <POOL_YIELD_ID> --source-account admin --network testnet --send no -- get_vault
+stellar contract invoke --id <POOL_YIELD_ID> --source-account admin --network testnet --send no -- get_invest_params
+stellar contract invoke --id <POOL_YIELD_ID> --source-account admin --network testnet --send no -- get_liabilities
+stellar contract invoke --id <POOL_YIELD_ID> --source-account admin --network testnet --send no -- get_surplus
+stellar contract invoke --id <POOL_YIELD_ID> --source-account admin --network testnet --send no -- get_policy_flags
+stellar contract invoke --id <POOL_YIELD_ID> --source-account admin --network testnet --send no -- get_root
+```
+
+Expected (and confirmed against the current deployment in
+`deployments/pool-yield-testnet.json`): `get_vault` = `CAGNH…N7Q7`,
+`get_invest_params` = `["10000000000","2000000000"]`, `get_liabilities` =
+`0`, `get_surplus` = `0`, `get_policy_flags` = `2`, and `get_root` a
+nonzero value (the empty-tree root for a 10-level merkle tree).

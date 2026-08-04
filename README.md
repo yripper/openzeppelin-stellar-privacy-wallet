@@ -184,6 +184,71 @@ set between deposit and withdrawal, not from who the depositor is. Collapsing
 the session account into the smart account loses nothing real — deposit and
 withdrawal edges are public in either design.
 
+## Yield-bearing shielded pool (our contract fork)
+
+Idle liquidity sitting in a privacy pool is doing nothing — every deposit
+that hasn't been withdrawn yet just sits in the contract's own balance
+earning zero yield. We forked the SPP pool contract to change that:
+deposits above a threshold get batch-invested into a
+[DeFindex](https://defindex.io) vault, and the fork lets an admin skim only
+the yield that accrues above what's owed back to depositors, as a protocol
+fee funding continued development. Source: `contracts/pool-yield/` (deep
+dive: `docs/modules/pool-yield.md`).
+
+**The balance-sheet invariant.** The contract tracks a running liability
+counter — the sum of every deposit minus every withdrawal, i.e. exactly what
+it owes back to note holders. Surplus is `(idle balance + vault position) −
+liabilities`, clamped at zero, and that's the *only* number the yield-skim
+function is capable of paying out. This isn't a policy the admin agrees to
+respect — it's the arithmetic: liabilities only grow on a deposit and only
+shrink on a withdrawal, so subtracting them from total assets structurally
+excludes note-backed funds from ever being paid as "yield," regardless of
+how the skim function is called or how many times.
+
+**Batching is for gas and liquidity management, not extra privacy.** Idle
+deposits get invested together in one vault call once they cross a
+threshold, rather than one vault call per deposit — this saves gas and
+avoids constantly toggling small amounts in and out of the vault. It does
+**not** make anyone's deposit more private. Every SPP deposit's amount is
+already a public input to its proof and the deposit transaction itself is
+public on-chain — batching the *investment* timing reveals nothing about
+individual deposits that wasn't already visible per-transaction. If you were
+hoping the invest step adds a privacy mixing effect on top of the pool
+itself: it doesn't, and we didn't design it to.
+
+**Per-user yield is not possible with this contract, on purpose (sealed note
+amounts).** A note's value is a field element inside a commitment — it never
+appears in cleartext on-chain, so the contract has no way to know which
+depositor a given slice of surplus "belongs" to. The liability counter and
+surplus figure are necessarily pool-wide aggregates; yield is collected as
+one lump sum, never attributed or paid per-user. Building real per-user
+yield attribution would need new circuits — e.g. fixed-denomination shields
+(notes minted only in a small set of standard sizes, so a note's
+denomination alone hints at eligible principal without decrypting its
+contents) is one hardening option we discussed in design review but have
+not built. If per-user yield distribution matters to you, treat it as a
+known gap, not a subtle bug we missed.
+
+**Addresses (testnet).** Pool:
+`CC3AVJZR5MSOLLNNP7DYSG3KR7MTBE4N4VMAT5ZX4NWIJTQL75RNI3F5` (deployed ledger
+3,968,245). DeFindex vault:
+`CAGNH456FTTMWEL26K7CGNVQABPB3SA5AV2YXU4R3XKUODEVU65ZN7Q7`. Nethermind's
+original (non-yield) pool stays live at
+`CAWCZ6EO4PM5EZOH5K7XSW3R46DGLOT3XSEH36OA5EOZUSJ5XS7BX6XI` purely so
+pre-fork notes stay visible/spendable through our indexer — new deposits go
+to the yield pool above. Full deployment record:
+`contracts/deployments/pool-yield-testnet.json`.
+
+**Live verification (testnet).** End-to-end flow verified on testnet (wallet
+`CCLBXDQJ…MGTPT3`):
+
+- Register public key: [`9652c643…`](https://stellar.expert/explorer/testnet/tx/9652c6435ce696100868deb77049d46417475faa5d253084b8453c2e1f4714fc)
+- Shield 600 XLM #1: [`544f08b8…`](https://stellar.expert/explorer/testnet/tx/544f08b81018e8b88fdd6f6712d4540cabde873c8595c79027436c4e9afb67d7)
+- Shield 600 XLM #2 (triggers batched 1000 XLM invest into DeFindex): [`6ecb31c8…`](https://stellar.expert/explorer/testnet/tx/6ecb31c8023c4b8c254a990e98bff856d81522191cdfa26a1f0dfc798fa15ebb)
+- Unshield 900 XLM (divest-on-demand in same tx): [`959ad5e5…`](https://stellar.expert/explorer/testnet/tx/959ad5e53cfc7395588034b093fbec77e1f6e7014d6f2d426125013af7aa8cdc)
+- `harvest()` on vault's fixed-APR strategy (permissionless, realizes yield): [`ef1246eb…`](https://stellar.expert/explorer/testnet/tx/ef1246eb4d6cd017a0fb419f022478dd137afceca524e07bfa08639b1bb7bd92)
+- `collect_yield` (paid 17,131 stroops surplus to admin, verified via transfer event): [`8b24ecf3…`](https://stellar.expert/explorer/testnet/tx/8b24ecf3cb9dad2ec97a5aae71fc487b7a6761e7522e52a5e5523f87f7ab6be0) — payout was small (0.0017131 XLM) because the demo ran minutes after deployment; the mechanism, not the amount, is the point.
+
 ## Monorepo layout
 
 ```
@@ -261,22 +326,39 @@ ledger 3,900,251):
 | Auditor | `CB27W7M4PLVGC77X5LPNZEOX5UCUWYJ3CODSBR6JR2WJEO66E4BGBDKA` |
 | Underlying asset (native XLM SAC) | `CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC` |
 
-Selective Privacy Pool (`packages/shared/src/config.ts`'s `TESTNET.spp`,
-deployed at ledger 3,773,948 — this is a shared testnet deployment, not one
-we control):
+Selective Privacy Pool (`packages/shared/src/config.ts`'s `TESTNET.spp`;
+the ASP membership/non-membership roots, public key registry, verifier, and
+EURC pool are a shared testnet deployment we don't control — the native-XLM
+pool is now **our own** yield-bearing fork, deployed at ledger 3,968,245,
+see the section above):
 
 | Contract | Address |
 |---|---|
-| Pool (native XLM) | `CAWCZ6EO4PM5EZOH5K7XSW3R46DGLOT3XSEH36OA5EOZUSJ5XS7BX6XI` |
+| Pool (native XLM, our yield fork) | `CC3AVJZR5MSOLLNNP7DYSG3KR7MTBE4N4VMAT5ZX4NWIJTQL75RNI3F5` |
+| Pool (native XLM, legacy — pre-fork notes only) | `CAWCZ6EO4PM5EZOH5K7XSW3R46DGLOT3XSEH36OA5EOZUSJ5XS7BX6XI` |
 | Pool (EURC) | `CAJJT5YV4BMFTHEOO5FGO2G56TEJKM4G4FW7FS4DYBLLLLHSAYUZWT74` |
 | Public key registry | `CDK75EQA2G4EDN34CWY7ALJ4EIQMNVBOFMHAVIF3BBY7IUDNHKHNDA36` |
 | ASP membership | `CDEFDJPNVWDWUUHGHGGZ56FEPSSJHQLGRKS6OWIRKGRYRWSBNMLW7J5K` |
+| DeFindex vault (our yield pool invests idle liquidity here) | `CAGNH456FTTMWEL26K7CGNVQABPB3SA5AV2YXU4R3XKUODEVU65ZN7Q7` |
 
 See `docs/modules/contracts.md` for the CT deploy/import procedure and
 `docs/modules/shared.md` for the full `TESTNET` config shape (smart-account
 WASM hash, relayer URL, RPC/Horizon URLs).
 
 ## Bootnode usage (for other builders)
+
+**Note (2026-08-04):** the SPP pool contract was redeployed as our
+yield-bearing fork at the source level (see "Yield-bearing shielded pool"
+above) and `packages/shared/src/config.ts`/`api/src/worker.ts` were updated
+to track it, but the production `api`/`worker` services have **not yet been
+redeployed** with that change (verified live: a `getEvents` call with the
+new 5-contract set below still gets `-32602 unsupported filters` from the
+deployed bootnode, while the 4-contract set with the OLD pool address still
+works). The example below reflects what's **currently live**, not the
+source's current state. See `docs/modules/deploy.md`'s Gotchas for the
+required redeploy sequence (backfill re-run BEFORE the worker deploy) —
+once that ships, this section needs updating to the 5-contract set
+(`pool`, `poolLegacy`, `poolEurc`, `aspMembership`, `publicKeyRegistry`).
 
 If you're building an SPP client against this same testnet pool deployment
 and need historical event sync, you can point your client at our bootnode
