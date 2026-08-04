@@ -96,6 +96,20 @@ const SPP_POOL_ERRORS: Readonly<Record<number, string>> = {
   12: "Arithmetic overflow while processing this transaction.",
   13: "Invalid proof input.",
   14: "Unsupported policy configuration.",
+  // Codes 15-16 are specific to our yield fork (`contracts/pool-yield/src/pool.rs`)
+  // and don't exist in the upstream reference the rest of this table was
+  // verified against — see `docs/modules/pool-yield.md`.
+  //
+  // Admin-only misconfiguration, rejected by `__constructor`/
+  // `update_invest_params` (`pool.rs:319,1113`) — users essentially never see
+  // this code.
+  15: "The pool's invest parameters are invalid — contact the operator.",
+  // User-reachable on Withdraw: `ensure_idle` (`pool.rs:870-923`) couldn't
+  // divest enough from the DeFindex vault to cover the payout, so the
+  // withdrawal is refused rather than paid short (never paid short — see
+  // `docs/modules/pool-yield.md`'s "Invest failures are swallowed; divest
+  // failures are fatal" gotcha).
+  16: "The pool could not free enough liquidity from its yield vault to pay this withdrawal. Nothing was paid out — try again in a moment.",
 };
 
 const SPP_CONTRACT_CODE_RE = /Error\(Contract,\s*#(\d+)\)/;

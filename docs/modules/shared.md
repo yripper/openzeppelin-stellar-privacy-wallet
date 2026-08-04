@@ -2,7 +2,7 @@
 
 > **Living document.** Read this before modifying the module. Update it in the same change whenever the module's behavior, endpoints, files, or dependencies change.
 
-**Source:** `packages/shared/` · **Last verified:** 2026-07-31 (added `buildCtInvokeTx`)
+**Source:** `packages/shared/` · **Last verified:** 2026-08-04 (refreshed `spp` config: yield pool, `maxDepositStroops`)
 
 ## Purpose
 
@@ -24,8 +24,12 @@ Cross-package config and constants for the privacy-wallet monorepo, published as
 - `TESTNET` (`packages/shared/src/config.ts:1`) — `as const` object with:
   - `rpcUrl`, `horizonUrl`, `networkPassphrase`, `nativeSac`
   - `smartAccount.{accountWasmHash, webauthnVerifierAddress, ed25519VerifierAddress, relayerUrl}`
-  - `spp.{pool, publicKeyRegistry, aspMembership, aspNonMembership, deploymentLedger, nethermindBootnode, maxDepositStroops}`
-    - `maxDepositStroops` (`1_000_000_000n` = 100 XLM) is the deployed XLM pool's **per-transaction deposit ceiling**, not a note denomination and not a balance cap. It is the pool's `maximum_deposit_amount` constructor argument, enforced at `resources/stellar-private-payments/contracts/pool/src/pool.rs:525-529` (`Error::WrongExtAmount`, code 6). The contract exposes no getter (`get_maximum_deposit` is private, pool.rs:659), so the value is read from persistent contract storage — re-verify with `getLedgerEntries` on the key `ScVal::Vec([Symbol("MaximumDepositAmount")])` against `spp.pool`. Verified 2026-08-03 on testnet: `scvU256` `1000000000`.
+  - `spp.{pool, poolLegacy, poolEurc, publicKeyRegistry, aspMembership, aspNonMembership, defindexVault, deploymentLedger, nethermindBootnode, maxDepositStroops}`
+    - `pool` (`config.ts:24`) — our yield-bearing fork of the XLM shielded pool, `CC3AVJZR5MSOLLNNP7DYSG3KR7MTBE4N4VMAT5ZX4NWIJTQL75RNI3F5` (source `contracts/pool-yield/`, deployment record `contracts/deployments/pool-yield-testnet.json`; see [`pool-yield.md`](pool-yield.md) for the deep dive). New deposits go here.
+    - `poolLegacy` (`config.ts:31`) — Nethermind's original (non-yield) pool, `CAWCZ6EO4PM5EZOH5K7XSW3R46DGLOT3XSEH36OA5EOZUSJ5XS7BX6XI`, what `pool` pointed at before the yield fork. Kept enabled purely so pre-fork notes stay visible/spendable; not deployed or owned by us.
+    - `poolEurc` (`config.ts:37`) — the EURC pool, the SDK's `all_contract_ids()` sync set's 2nd enabled pool.
+    - `defindexVault` (`config.ts:47`) — the DeFindex vault `pool`'s idle liquidity above `investThreshold` is batch-invested into (`pool.rs`'s `get_vault`/`DefindexVaultClient`).
+    - `maxDepositStroops` (`config.ts:69`, `10_000_000_000n` = 1000 XLM) is the yield `pool`'s **per-transaction deposit ceiling**, not a note denomination and not a total-balance cap — pool notes hold arbitrary amounts and you may deposit repeatedly. This is OUR OWN `maximum_deposit_amount` constructor argument (we deployed this pool), not a value read from chain storage the way an earlier version of this doc described for Nethermind's pool: `contracts/deployments/pool-yield-testnet.json`'s `constructor.maximumDepositAmount` records the same `10000000000` stroops passed at deploy. Enforced in `transact`, `contracts/pool-yield/src/pool.rs:578-581` (`deposit_u > max` rejects with `Error::WrongExtAmount`, code 6) — identical semantics to Nethermind's original pool (`resources/stellar-private-payments/contracts/pool/src/pool.rs:525-529`), since `pool-yield` is a fork of it.
   - `ct.{token, verifier, auditor, underlying, deployedAtLedger, auditorId, addrF}` — Confidential Token contract suite on testnet; sourced from `contracts/deployments/testnet.json` (see `docs/modules/contracts.md` for the deploy/import procedure and provenance). The auditor's private key is deliberately **not** here — it lives in the repo-root `.env` as `CT_AUDITOR_SECRET_HEX`.
 - `buildCtInvokeTx(cfg, contractId, method, args)` (`packages/shared/src/ct-tx.ts:65`) — build + simulate an `AssembledTransaction` for a Confidential Token call, leaving auth entries unsigned. See [`ct-tx.md`](ct-tx.md).
 - `buildCtInvokeOp(contractId, method, args)` (`packages/shared/src/ct-tx.ts:38`) — the pure `invokeContractFunction` op behind it.
