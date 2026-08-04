@@ -4,15 +4,33 @@
 # Rust workspace + build artifacts, but deployed services only need the npm
 # package the app installs as a file: dependency —
 # vendor/stellar-private-payments/sdk/web (package.json + js/ + dist/).
-# Everything else in the vendor tree is reference source for humans and the
-# local wasm rebuild, never read by a Railway build.
-vendor/stellar-private-payments/*
-!vendor/stellar-private-payments/sdk
-vendor/stellar-private-payments/sdk/*
-!vendor/stellar-private-payments/sdk/web
-!vendor/stellar-private-payments/UPSTREAM.md
-
-# Gitignored anyway, but be explicit: never upload the reference clones or
-# the Rust target cache (vendor/*/target is a symlink into resources/).
+#
+# PLAIN EXCLUSIONS ONLY: Railway's ignore engine does not re-include through
+# gitignore-style `!` negations — the first deploy of the fork shipped
+# sdk/web WITHOUT dist/ because of exactly that (vendor-spp.mjs failed with
+# "could not find stellar-private-payments dist/"). List what to drop, never
+# rely on un-ignoring a child of an ignored parent.
 resources/
+
+vendor/stellar-private-payments/app/
+vendor/stellar-private-payments/circuit-keys/
+vendor/stellar-private-payments/circuits/
+vendor/stellar-private-payments/cli/
+vendor/stellar-private-payments/contracts/
+vendor/stellar-private-payments/docs/
+vendor/stellar-private-payments/e2e-tests/
+vendor/stellar-private-payments/poseidon2/
+vendor/stellar-private-payments/scripts/
 vendor/stellar-private-payments/target
+vendor/stellar-private-payments/testdata/
+vendor/stellar-private-payments/tools/
+vendor/stellar-private-payments/.github/
+vendor/stellar-private-payments/sdk/client/
+vendor/stellar-private-payments/sdk/disclosure/
+vendor/stellar-private-payments/sdk/prover/
+vendor/stellar-private-payments/sdk/state/
+vendor/stellar-private-payments/sdk/stellar/
+vendor/stellar-private-payments/sdk/tests/
+vendor/stellar-private-payments/sdk/tx-planner/
+vendor/stellar-private-payments/sdk/types/
+vendor/stellar-private-payments/sdk/witness/
