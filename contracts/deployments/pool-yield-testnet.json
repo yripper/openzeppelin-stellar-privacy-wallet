@@ -1,0 +1,21 @@
+{
+  "network": "testnet",
+  "rpcUrl": "https://soroban-testnet.stellar.org",
+  "passphrase": "Test SDF Network ; September 2015",
+  "deployedAtLedger": 3968245,
+  "contract": "CC3AVJZR5MSOLLNNP7DYSG3KR7MTBE4N4VMAT5ZX4NWIJTQL75RNI3F5",
+  "source": "contracts/pool-yield (fork of vendor/stellar-private-payments/contracts/pool)",
+  "constructor": {
+    "admin": "GBB6XFESPZMKCBTKVGXEN3HN7P2VC57Q7C5E5GKT4CVCJROHEYJI2QJX",
+    "token": "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
+    "verifier": "CCNOLQUUPEZTPNZ7LMS3PYE5NVYNNTKTHJP7HDK4NJMH4JPKFP7HOHD4",
+    "aspMembership": "CDEFDJPNVWDWUUHGHGGZ56FEPSSJHQLGRKS6OWIRKGRYRWSBNMLW7J5K",
+    "aspNonMembership": "CBEPJBHP6X4K7KWLRPFUGPRS3OM6HWXTWIVN3M2LCGZZHCCTHHSYAAF3",
+    "maximumDepositAmount": "10000000000",
+    "levels": 10,
+    "policyFlags": 2,
+    "vault": "CAGNH456FTTMWEL26K7CGNVQABPB3SA5AV2YXU4R3XKUODEVU65ZN7Q7",
+    "investThreshold": "10000000000",
+    "liquidityBuffer": "2000000000"
+  }
+}
