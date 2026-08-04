@@ -86,7 +86,7 @@ Three additive pieces, none removing or changing either per-rail tab:
    `NewNullifierEvent` only — checked against the vendored reference source,
    `resources/stellar-private-payments/contracts/pool/src/pool.rs:191-210`,
    not part of this repo's buildable tree); this repo's own indexer doesn't
-   track the native XLM SAC (only the 4 SPP-specific contracts,
+   track the native XLM SAC (only the 5 SPP-specific contracts,
    `api/src/worker.ts`'s `buildSppContractIds()`); the browser SDK's local
    note storage has no per-note origin-type field (`UserNoteSummary` in
    `sdk/types/src/lib.rs`); the ONE method the wasm client DOES expose for
@@ -160,6 +160,8 @@ Three additive pieces, none removing or changing either per-rail tab:
 | `app/src/pages/RequireWallet.tsx` (2026-08-03) | Route guard wrapping `/wallet`. Redirects `disconnected` -> `/`, and a connected session that still can't decrypt (`!bundle`, or `bundleMismatch`) -> `/restore`. Renders a "Checking for an existing session…" state while `status` is `restoring`/`creating`/`connecting` — redirecting before the silent restore resolves would sign out every returning user. |
 | `app/src/App.tsx`, `app/src/main.tsx` | Route table (`/wallet` wrapped in `RequireWallet`) + the global `SiteFooter`; app bootstrap (calls `ensureBrowserBackend()` once, browser-guarded) and the self-hosted font imports. |
 | `app/src/components/SiteFooter.tsx` (2026-08-04) | Global footer on every page: "created by coderipper" + GitHub-mark link (inline SVG, `currentColor`) to the public repo. Styled by `index.css`'s `.site-footer` block (ink-soft, centered). |
+| `app/src/lib/explorer.ts` (+ `.test.ts`) | stellar.expert URL builders: `explorerNetwork(passphrase)` maps a network passphrase to the explorer's path segment (`"public"`/`"testnet"`/`undefined` for networks it doesn't host), `txUrl(hash, passphrase?)` and `addressUrl(address, passphrase?)` return the explorer URL or `undefined` (empty input / unhosted network — callers render plain text instead of a 404 link). Network derived from `TESTNET.networkPassphrase`, never hard-coded. |
+| `app/src/components/TxLink.tsx` | A tx hash rendered as a stellar.expert link (new tab — the SPP rail holds an exclusive OPFS lock, so in-place navigation is genuinely disruptive); falls back to a plain `<span>` when `txUrl` returns `undefined`. Displays `truncateHash(hash)` unless `label` overrides. |
 | `app/vitest.config.ts`, `app/vitest.setup.ts` | Unit-test config: plain Node environment + `fake-indexeddb/auto` (jsdom does not implement IndexedDB). |
 | `app/src/pages/Activity.tsx` (Task 14; C-signer fork 2026-08-04) | The unified Activity tab: `CtProvider` + `ActivityFeed` (CT, reused unchanged) and `SppBoundaryFeed` (SPP boundary log), as two separate sections. The boundary log is keyed by the wallet's `C…` address (`contractId`), which the page already holds — no SPP SDK connection, no derivation. |
 | `app/src/components/SppBoundaryFeed.tsx` (Task 14; C-signer fork 2026-08-04) | Reads `lib/spp-boundary-log.ts`'s local shield/unshield log for one wallet `address`; loading/empty/error states, same shape as `ActivityFeed.tsx`. |
@@ -187,11 +189,13 @@ Three additive pieces, none removing or changing either per-rail tab:
 - `BalanceCard`, `SendForm`, `ActivityFeed` (default exports, Task 11) — `app/src/components/{BalanceCard,SendForm,ActivityFeed}.tsx`
 - `Confidential` (default export, Task 11) — `app/src/pages/Confidential.tsx`
 - `API_URL` (Task 12) — `app/src/lib/api-url.ts:10` (re-exported from `app/src/lib/ct.ts`)
-- `SessionSigner`, `sessionKeypair(sppRootSecret)` (Task 12) — `app/src/lib/spp-signer.ts:88,122`
+- `SessionSigner`, `sessionKeypair(sppRootSecret)` (Task 12) — `app/src/lib/spp-signer.ts:80,165`
 - `SppRail` (`.connect`/`.refresh`/`.resync`/`.registerPublicKeys`/`.lookupRecipient`/`.shield`/`.sendShielded`/`.unshield`/`.destroy`), `connectSppRail`, `SppWalletSwitchError`, `loadSppSdk`, `asExecuteResult`, `SPP_BOOTNODE_URL`, `SPP_PROGRESS_EVENT`, `SPP_CONNECT_PHASE_LABELS`, `SppView`, `SppExecuteResult`, `SppRecipientLookup`, `SppConnectPhase`/`SppConnectOptions`, `SppProgressDetail` (Task 12; session surface removed by the C-signer fork 2026-08-04) — `app/src/lib/spp.ts`
 - `Shielded` (default export) + `connectReducer`/`initialConnectState`/`ConnectState`/`ConnectEvent`, `resolveNotices`, `describeResult`, `humanizeSppError` (exported for unit testing; `humanizeSppError` added Task 14) — `app/src/pages/Shielded.tsx`
 - `PoolStats` (type), `SimulateFn`, `fetchPoolStats(simulate?)` (2026-08-04) — `app/src/lib/pool-stats.ts:37,35,82`
 - `PoolStats` (default export component, 2026-08-04) — `app/src/components/PoolStats.tsx:21`
+- `explorerNetwork(passphrase)`, `txUrl(hash, passphrase?)`, `addressUrl(address, passphrase?)` — `app/src/lib/explorer.ts:20,31,38`
+- `TxLink` (default export), `TxLinkProps` — `app/src/components/TxLink.tsx:23,16`
 - `humanizeError` (Task 14) — `app/src/lib/errors.ts:44`
 - `humanizeRelayerError` (Task 14) — `app/src/lib/relayer-errors.ts:60`
 - `SppBoundaryEvent`, `SppBoundaryEventType`, `recordSppBoundaryEvent`, `listSppBoundaryEvents` (Task 14) — `app/src/lib/spp-boundary-log.ts`
@@ -318,6 +322,7 @@ manual/live verification instead (see Testing).
 
 ## Testing
 
+- **Current unit-suite count (2026-08-04, after the pool-stats card): 143 tests, 13 files, all passing** (`pnpm --filter app test`, re-verified 2026-08-04) — the C-signer-fork entry below recorded 140/12; `pool-stats.test.ts` (×3) is the addition.
 - **C-signer fork (2026-08-04): full SPP lifecycle verified live on testnet with the wallet's C-address as the pool identity** (Playwright + CDP WebAuthn virtual authenticator, local vite dev on the forked `file:` dep, `VITE_API_URL` = the prod Railway API as bootnode). Fresh wallet `CCLBXDQJXFMSEOBA5CVTBQN7A3HSDMDXU4FYU4CZWZKHFKHMRAMGTPT3` (friendbot 10,000 XLM — wallet funding only; NO session account was created at any point): Shielded tab connected (history sync through the prod bootnode → key derivation via the signer shim → pool open with `userAddress` = C, `txSource` = kit deployer G) → **register** owner=C (tx `d917470b…`) → **shield 5 XLM** pulled directly from the smart account, real Groth16 proof + passkey-signed auth entry + relayer submission via `executeTransaction` (tx `352efbca…`) → **unshield 2 XLM** paid directly to the C-address as `ext_data.recipient` (tx `e5e2a26a…`) → **shielded self-send 1 XLM** addressed by C-address after a successful registry lookup of that same C-address (tx `b443e940…`). Arithmetic exact: public XLM `10,000 → 9,997`, pool `3.0000000` across 2 notes (send split change correctly), boundary feed rendered both Shield and Unshield rows under the wallet key. Zero new console errors (only the pre-existing relayer-400-then-fallback line). Unit suite after the rewiring: 140 tests, 12 files, all passing; `tsc -b` clean; `vite build` clean.
 - `pnpm --filter app test` (`vitest run`) — 13 tests across `src/lib/privacy-bundle.test.ts` (8) and `src/lib/backup.test.ts` (5). Verified passing; both suites were mutation-tested during development (temporarily reintroducing the exact bugs the tests target — deriving `addr_f` from `cAddress` instead of the token, and swallowing the GCM auth failure instead of rethrowing — to confirm the assertions actually catch them, not just pass vacuously).
 - `pnpm --filter app run build` (`tsc --noEmit && vite build`, with vendoring via `prebuild`) — verified passing.

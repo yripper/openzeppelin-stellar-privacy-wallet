@@ -41,7 +41,7 @@ Two independent things share this directory:
   `packages/shared/src/config.ts` reads `deployments/pool-yield-testnet.json`
   as of this deployment) — consumers currently read the `<POOL_YIELD_ID>`
   contract address straight out of that JSON file. The contract's own
-  invocable surface (22 exported functions incl. `transact`,
+  invocable surface (17 exported functions incl. `transact`,
   `collect_yield`, `get_surplus`, `get_invest_params`, `get_vault`,
   `get_root`) lives in `contracts/pool-yield/src/pool.rs`.
 
