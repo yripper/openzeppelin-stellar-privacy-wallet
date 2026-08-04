@@ -143,8 +143,8 @@ describe("humanizeSppError", () => {
 });
 
 describe("connectReducer", () => {
-  const RAIL_A = { sessionAddress: "GA…" } as unknown as SppRail;
-  const RAIL_B = { sessionAddress: "GB…" } as unknown as SppRail;
+  const RAIL_A = { walletAddress: "CA…" } as unknown as SppRail;
+  const RAIL_B = { walletAddress: "CB…" } as unknown as SppRail;
 
   /** Replay a whole effect sequence, exactly as the component dispatches it. */
   function run(events: ConnectEvent[], from: ConnectState = initialConnectState): ConnectState {

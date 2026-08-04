@@ -24,7 +24,7 @@ import { CtProvider } from "../providers/CtProvider.js";
 import { useWallet } from "../providers/WalletProvider.js";
 import ActivityFeed from "../components/ActivityFeed.js";
 import SppBoundaryFeed from "../components/SppBoundaryFeed.js";
-import { sessionKeypair } from "../lib/spp-signer.js";
+
 
 export default function Activity() {
   const { contractId, bundle } = useWallet();
@@ -37,17 +37,14 @@ export default function Activity() {
     );
   }
 
-  // Pure derivation from the already-loaded privacy bundle — no SPP SDK
-  // connection needed just to know which session address's boundary log to
-  // read (see `SppBoundaryFeed`'s module doc).
-  const sessionAddress = sessionKeypair(bundle.sppRootSecret).publicKey();
-
   return (
     <div className="confidential stack">
       <CtProvider>
         <ActivityFeed />
       </CtProvider>
-      <SppBoundaryFeed sessionAddress={sessionAddress} />
+      {/* Boundary events are keyed by the wallet's C-address — the pool
+          identity since the C-signer fork (`spp.ts`'s module doc). */}
+      <SppBoundaryFeed address={contractId} />
     </div>
   );
 }

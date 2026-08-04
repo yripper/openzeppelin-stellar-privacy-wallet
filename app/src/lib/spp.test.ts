@@ -16,7 +16,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   asExecuteResult,
   SppRail,
-  stroopsToKitXlm,
   type SppConnectOptions,
   type SppConnectPhase,
 } from "./spp.js";
@@ -38,29 +37,6 @@ async function freshModule(): Promise<typeof import("./spp.js")> {
 
 afterEach(() => {
   vi.restoreAllMocks();
-});
-
-describe("stroopsToKitXlm", () => {
-  it("converts whole and fractional stroop amounts exactly", () => {
-    expect(stroopsToKitXlm(10_0000000n)).toBe(10);
-    expect(stroopsToKitXlm(1n)).toBe(0.0000001);
-    expect(stroopsToKitXlm(10050_0000000n)).toBe(10050);
-  });
-
-  it("round-trips through the kit's own conversion", () => {
-    // `kit.transfer` does BigInt(Math.round(xlm * 10_000_000)) internally
-    // (smart-account-kit/src/utils.ts:92-94) — the value it recovers must be
-    // the exact stroop amount we started from.
-    for (const stroops of [1n, 7n, 10_0000000n, 50_0000000n, 10044_4666909n]) {
-      expect(BigInt(Math.round(stroopsToKitXlm(stroops) * 10_000_000))).toBe(stroops);
-    }
-  });
-
-  it("throws rather than silently losing precision on an amount a float cannot carry", () => {
-    // Beyond 2^53 stroops the float round-trip stops being exact; the guard
-    // must refuse instead of moving a wrong amount.
-    expect(() => stroopsToKitXlm(90071992547409911n)).toThrow(/cannot be represented exactly/);
-  });
 });
 
 describe("asExecuteResult", () => {

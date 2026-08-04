@@ -70,16 +70,16 @@ export interface SppBoundaryEvent {
 
 const MAX_ENTRIES = 200;
 
-function storageKey(sessionAddress: string): string {
-  return `privacy-wallet:spp-boundary:${sessionAddress}`;
+function storageKey(address: string): string {
+  return `privacy-wallet:spp-boundary:${address}`;
 }
 
-/** Append one boundary event for `sessionAddress`, newest-first, capped at {@link MAX_ENTRIES}. */
+/** Append one boundary event for `address` (the wallet C-address since the C-signer fork), newest-first, capped at {@link MAX_ENTRIES}. */
 export async function recordSppBoundaryEvent(
-  sessionAddress: string,
+  address: string,
   event: Omit<SppBoundaryEvent, "id" | "createdAt">
 ): Promise<void> {
-  const key = storageKey(sessionAddress);
+  const key = storageKey(address);
   const existing = (await get<SppBoundaryEvent[]>(key)) ?? [];
   const entry: SppBoundaryEvent = {
     ...event,
@@ -89,7 +89,7 @@ export async function recordSppBoundaryEvent(
   await set(key, [entry, ...existing].slice(0, MAX_ENTRIES));
 }
 
-/** Read `sessionAddress`'s boundary log, newest-first. Empty array (never `undefined`) when nothing has been recorded yet. */
-export async function listSppBoundaryEvents(sessionAddress: string): Promise<SppBoundaryEvent[]> {
-  return (await get<SppBoundaryEvent[]>(storageKey(sessionAddress))) ?? [];
+/** Read `address`'s boundary log, newest-first. Empty array (never `undefined`) when nothing has been recorded yet. */
+export async function listSppBoundaryEvents(address: string): Promise<SppBoundaryEvent[]> {
+  return (await get<SppBoundaryEvent[]>(storageKey(address))) ?? [];
 }

@@ -6,10 +6,10 @@
  * plus the client's own `"TIMEOUT"` catch-clause case).
  *
  * The relayer path is shared by every fee-sponsored submission in this app —
- * CT contract calls (`ct.ts`'s `invoke()`), the SAC transfer that funds the
- * SPP session account (`spp.ts`'s `moveToSession()`), and passkey wallet
- * deploy (`providers/WalletProvider.tsx`'s `assertDeployed`) — all go through
- * `kit.signAndSubmit`/`kit.transfer`/`kit.createWallet`, which route through
+ * CT contract calls (`ct.ts`'s `invoke()`), SPP pool writes (`spp-signer.ts`'s
+ * `executeTransaction`), and passkey wallet deploy
+ * (`providers/WalletProvider.tsx`'s `assertDeployed`) — all go through
+ * `kit.signAndSubmit`/`kit.createWallet`, which route through
  * `TESTNET.smartAccount.relayerUrl` when configured (`kit.ts`).
  *
  * **Why match on message TEXT instead of the structured error code:**
