@@ -87,7 +87,7 @@ const SPP_POOL_ERRORS: Readonly<Record<number, string>> = {
   // `WrongExtAmount` when `ext_amount > maximum_deposit_amount`), which is by
   // far the likeliest way a user meets this code — hence naming the cap here
   // rather than only saying "invalid".
-  6: "Invalid amount for this pool — a single deposit cannot exceed the pool's maximum (100 XLM on this deployment).",
+  6: "Invalid amount for this pool — a single deposit cannot exceed the pool's maximum (1000 XLM on this deployment).",
   7: "The zero-knowledge proof for this transaction was rejected.",
   8: "This transaction was built against an outdated pool state — try again after a refresh.",
   9: "This note has already been spent (double-spend rejected).",

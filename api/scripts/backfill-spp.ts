@@ -1,10 +1,15 @@
 /**
- * Task 8.5: fetch the complete SPP contract event history from
- * stellar.expert's public archive (the only remaining source — see
- * `src/lib/spp-archive.ts`'s module doc for why both live sources, the RPC
- * and Nethermind's bootnode, are dead for this history), resolve each
- * event's `txHash` via Horizon testnet, map to `RawEvent` rows, and write a
- * deterministic, committed fixture (`api/fixtures/spp-backfill.json`).
+ * Task 8.5 (contract list updated Task 9): fetch the complete SPP contract
+ * event history from stellar.expert's public archive (the only remaining
+ * source — see `src/lib/spp-archive.ts`'s module doc for why both live
+ * sources, the RPC and Nethermind's bootnode, are dead for this history),
+ * resolve each event's `txHash` via Horizon testnet, map to `RawEvent` rows,
+ * and write a deterministic, committed fixture
+ * (`api/fixtures/spp-backfill.json`). `CONTRACTS` below now covers 5
+ * contracts (was 4): the yield-fork `pool` (`TESTNET.spp.pool`, repointed by
+ * this task), the newly-added `pool_legacy` (Nethermind's original pool,
+ * `TESTNET.spp.poolLegacy` — kept so pre-fork notes stay visible/spendable),
+ * `pool_eurc`, `asp_membership`, and `public_key_registry`.
  *
  * Usage: `pnpm --filter @privacy-wallet/api exec tsx scripts/backfill-spp.ts`
  * Idempotent: re-running refreshes the fixture to whatever is on-chain "to
@@ -53,6 +58,7 @@ const POOL_EURC_CONTRACT_ID = "CAJJT5YV4BMFTHEOO5FGO2G56TEJKM4G4FW7FS4DYBLLLLHSA
 
 const CONTRACTS: ReadonlyArray<{ name: string; id: string }> = [
   { name: "pool", id: TESTNET.spp.pool },
+  { name: "pool_legacy", id: TESTNET.spp.poolLegacy },
   { name: "pool_eurc", id: POOL_EURC_CONTRACT_ID },
   { name: "asp_membership", id: TESTNET.spp.aspMembership },
   { name: "public_key_registry", id: TESTNET.spp.publicKeyRegistry },

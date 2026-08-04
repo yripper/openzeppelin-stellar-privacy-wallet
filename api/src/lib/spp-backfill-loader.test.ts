@@ -46,13 +46,13 @@ function makeRow(overrides: Partial<NewEventRow> = {}): NewEventRow {
 }
 
 describe("SPP_STREAM_KEY", () => {
-  it("matches the exact stream key api/src/worker.ts's buildSppStreamKey() computes (spp:<pool>,<poolEurc>,<aspMembership>,<publicKeyRegistry>)", () => {
+  it("matches the exact stream key api/src/worker.ts's buildSppStreamKey() computes (spp:<pool>,<poolLegacy>,<poolEurc>,<aspMembership>,<publicKeyRegistry>)", () => {
     // Literal, independently re-derived — pins the string so an accidental
     // drift from worker.ts's actual key is caught here rather than silently
     // at runtime (belt-and-suspenders now that SPP_STREAM_KEY imports
     // buildSppStreamKey() directly instead of re-deriving it by hand).
     expect(SPP_STREAM_KEY).toBe(
-      "spp:CAWCZ6EO4PM5EZOH5K7XSW3R46DGLOT3XSEH36OA5EOZUSJ5XS7BX6XI,CAJJT5YV4BMFTHEOO5FGO2G56TEJKM4G4FW7FS4DYBLLLLHSAYUZWT74,CDEFDJPNVWDWUUHGHGGZ56FEPSSJHQLGRKS6OWIRKGRYRWSBNMLW7J5K,CDK75EQA2G4EDN34CWY7ALJ4EIQMNVBOFMHAVIF3BBY7IUDNHKHNDA36",
+      "spp:CC3AVJZR5MSOLLNNP7DYSG3KR7MTBE4N4VMAT5ZX4NWIJTQL75RNI3F5,CAWCZ6EO4PM5EZOH5K7XSW3R46DGLOT3XSEH36OA5EOZUSJ5XS7BX6XI,CAJJT5YV4BMFTHEOO5FGO2G56TEJKM4G4FW7FS4DYBLLLLHSAYUZWT74,CDEFDJPNVWDWUUHGHGGZ56FEPSSJHQLGRKS6OWIRKGRYRWSBNMLW7J5K,CDK75EQA2G4EDN34CWY7ALJ4EIQMNVBOFMHAVIF3BBY7IUDNHKHNDA36",
     );
   });
 });

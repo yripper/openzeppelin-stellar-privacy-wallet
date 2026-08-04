@@ -97,21 +97,39 @@ export async function tick(
 }
 
 /**
- * The 4-contract SPP set the worker's SPP stream follows AND the bootnode-
+ * The 5-contract SPP set the worker's SPP stream follows AND the bootnode-
  * protocol endpoint (Task 9, `api/src/modules/bootnode/handler.ts`)
- * allow-lists — the SDK's full sync set, `all_contract_ids()` = enabled
- * pools + asp_membership + public_key_registry
- * (`resources/stellar-private-payments/sdk/types/src/lib.rs:323-329`,
- * cross-checked against the deployment manifest). Exported so
- * `spp-backfill-loader.ts` and the bootnode handler share ONE source of
- * truth instead of replicating the array by hand — the previous (Task 7/8.5)
- * 2-contract version of this array was hand-copied into
- * `spp-backfill-loader.ts` as `SPP_STREAM_KEY`, flagged there as a drift
- * risk if this array ever changed. It just did (Task 9: 2 -> 4 contracts),
- * so this task closes that gap by exporting rather than re-copying.
+ * allow-lists — the SDK's `all_contract_ids()` sync set (enabled pools +
+ * asp_membership + public_key_registry,
+ * `resources/stellar-private-payments/sdk/types/src/lib.rs:323-329`) PLUS
+ * `poolLegacy`, Nethermind's original pool, which the yield fork's SDK
+ * manifest keeps enabled so pre-fork notes stay visible/spendable (see
+ * `packages/shared/src/config.ts`'s `spp.pool`/`spp.poolLegacy` doc
+ * comments). Exported so `spp-backfill-loader.ts` and the bootnode handler
+ * share ONE source of truth instead of replicating the array by hand — the
+ * previous (Task 7/8.5) 2-contract version of this array was hand-copied
+ * into `spp-backfill-loader.ts` as `SPP_STREAM_KEY`, flagged there as a
+ * drift risk if this array ever changed. It has changed twice since (Task 9:
+ * 2 -> 4 contracts; this task: `pool` repointed at the yield fork + a 5th
+ * contract, `poolLegacy`, added), so this task closes that gap by exporting
+ * rather than re-copying.
+ *
+ * Changing this list changes `buildSppStreamKey()`'s output, which changes
+ * the `cursors` table row the SPP stream reads/writes — a NEW key means a
+ * FRESH cursor row, which `makeBootnodeThenRpcSource` treats as "first
+ * poll, start in bootnode mode" against Nethermind's dead bootnode (see the
+ * module doc's "⚠️ Required migration step" entry). `backfill-spp.ts` MUST
+ * be re-run against the prod DB (re-seeding the new key's cursor straight to
+ * RPC mode) before a worker built from this change is deployed — see Task 12.
  */
 export function buildSppContractIds(): string[] {
-  return [TESTNET.spp.pool, TESTNET.spp.poolEurc, TESTNET.spp.aspMembership, TESTNET.spp.publicKeyRegistry];
+  return [
+    TESTNET.spp.pool,
+    TESTNET.spp.poolLegacy,
+    TESTNET.spp.poolEurc,
+    TESTNET.spp.aspMembership,
+    TESTNET.spp.publicKeyRegistry,
+  ];
 }
 
 /** `spp:<contractIds joined by ",">` — the stream key `buildStreamStates` uses for the SPP stream's `cursors` row. Exported (Task 9) for the same reason as `buildSppContractIds`. */
