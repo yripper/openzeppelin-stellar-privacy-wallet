@@ -669,6 +669,7 @@ impl PoolContract {
         if ext_data.ext_amount < zero {
             let abs = zero.sub(&ext_data.ext_amount);
             let amount: i128 = Self::i256_to_i128_nonneg(env, &abs)?;
+            Self::ensure_idle(env, amount)?;
             token_client.transfer(&this, &ext_data.recipient, &amount);
             Self::sub_liabilities(env, amount);
         }
@@ -860,6 +861,65 @@ impl PoolContract {
                 sub_invocations: soroban_sdk::vec![env],
             })
         ]);
+    }
+
+    /// Guarantee at least `required` idle stroops before a payout, divesting
+    /// `deficit + buffer` from the vault (buffer refill included, clamped to
+    /// our share balance). Unlike invest, failure here MUST error: a
+    /// withdrawal is never paid short.
+    fn ensure_idle(env: &Env, required: i128) -> Result<(), Error> {
+        let token = Self::get_token(env)?;
+        let this = env.current_contract_address();
+        let token_client = TokenClient::new(env, &token);
+        let idle = token_client.balance(&this);
+        if idle >= required {
+            return Ok(());
+        }
+        let vault = Self::get_vault(env)?;
+        let (_, buffer) = Self::get_invest_params(env)?;
+        let vault_client = DefindexVaultClient::new(env, &vault);
+        let shares = vault_client.balance(&this);
+        if shares <= 0 {
+            return Err(Error::VaultDivestFailed);
+        }
+
+        // Assets one probe-batch of shares is worth (price oracle).
+        const SHARE_PROBE: i128 = 10_000_000;
+        let per_probe = vault_client
+            .get_asset_amounts_per_shares(&SHARE_PROBE)
+            .get(0)
+            .ok_or(Error::VaultDivestFailed)?;
+        if per_probe <= 0 {
+            return Err(Error::VaultDivestFailed);
+        }
+
+        let deficit = required - idle; // > 0 here
+        let desired = deficit.checked_add(buffer).ok_or(Error::Overflow)?;
+        let numerator = desired.checked_mul(SHARE_PROBE).ok_or(Error::Overflow)?;
+        // Signed `i128::div_ceil` is not a stable API on this toolchain; both
+        // operands are positive here (numerator > 0, per_probe > 0 checked
+        // above), so ceiling-divide via the stable unsigned `u128::div_ceil`
+        // instead. The result can only shrink relative to `numerator`, which
+        // already fits `i128`, so the cast back is safe.
+        let mut shares_needed =
+            (numerator as u128).div_ceil(per_probe as u128) as i128;
+        if shares_needed > shares {
+            shares_needed = shares;
+        }
+
+        // Hard minimum: the divest must at least cover the deficit; the
+        // vault enforces it via min_amounts_out.
+        let mut min_out = Vec::new(env);
+        min_out.push_back(deficit);
+        vault_client
+            .try_withdraw(&shares_needed, &min_out, &this)
+            .map_err(|_| Error::VaultDivestFailed)?
+            .map_err(|_| Error::VaultDivestFailed)?;
+
+        if token_client.balance(&this) < required {
+            return Err(Error::VaultDivestFailed);
+        }
+        Ok(())
     }
 
     /// Batch-invest idle liquidity above the buffer once idle ≥ threshold.

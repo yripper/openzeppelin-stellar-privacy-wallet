@@ -1283,6 +1283,34 @@ fn do_withdraw(env: &Env, s: &YieldSetup, amount: i128, recipient: &Address, nul
     s.pool.transact(&proof, &ext, recipient);
 }
 
+/// Same construction as do_withdraw but via try_transact; true if it errored.
+fn try_withdraw_expect_err(env: &Env, s: &YieldSetup, amount: i128, recipient: &Address, nullifier: u32) -> bool {
+    let ext = ExtData {
+        recipient: recipient.clone(),
+        ext_amount: I256::from_i32(env, 0).sub(&I256::from_i128(env, amount)),
+        encrypted_output0: Bytes::new(env),
+        encrypted_output1: Bytes::new(env),
+    };
+    let abs = U256::from_be_bytes(env, &I256::from_i128(env, amount).to_be_bytes());
+    let public_amount = bn256_modulus(env).sub(&abs);
+    let proof = Proof {
+        proof: mk_mock_groth16_proof(env),
+        root: s.pool.get_root(),
+        input_nullifiers: {
+            let mut v: Vec<U256> = Vec::new(env);
+            v.push_back(U256::from_u32(env, nullifier));
+            v
+        },
+        output_commitment0: U256::from_u32(env, nullifier.wrapping_mul(2)),
+        output_commitment1: U256::from_u32(env, nullifier.wrapping_mul(2) + 1),
+        public_amount,
+        ext_data_hash: compute_ext_hash(env, &ext),
+        asp_membership_root: s.member_root.clone(),
+        asp_non_membership_root: s.non_member_root.clone(),
+    };
+    s.pool.try_transact(&proof, &ext, recipient).is_err()
+}
+
 #[test]
 fn liabilities_track_deposits_and_withdrawals() {
     let env = test_env();
@@ -1329,4 +1357,48 @@ fn invest_failure_never_blocks_a_deposit() {
     assert_eq!(TokenClient::new(&env, &s.token).balance(&s.pool_id), 1_200);
     assert_eq!(s.vault_client.balance(&s.pool_id), 0);
     assert_eq!(s.pool.get_liabilities(), 1_200);
+}
+
+#[test]
+fn withdrawal_within_buffer_never_touches_vault() {
+    let env = test_env();
+    let s = setup_yield_pool(&env);
+    do_deposit(&env, &s, 600, 0x300);
+    do_deposit(&env, &s, 600, 0x301); // invested 1000, idle 200
+    let shares_before = s.vault_client.balance(&s.pool_id);
+    let recipient = Address::generate(&env);
+    do_withdraw(&env, &s, 150, &recipient, 0x302);
+    assert_eq!(s.vault_client.balance(&s.pool_id), shares_before);
+    assert_eq!(TokenClient::new(&env, &s.token).balance(&recipient), 150);
+    assert_eq!(TokenClient::new(&env, &s.token).balance(&s.pool_id), 50);
+}
+
+#[test]
+fn withdrawal_beyond_idle_divests_and_refills_buffer() {
+    let env = test_env();
+    let s = setup_yield_pool(&env);
+    do_deposit(&env, &s, 600, 0x310);
+    do_deposit(&env, &s, 600, 0x311); // invested 1000, idle 200
+    let recipient = Address::generate(&env);
+    do_withdraw(&env, &s, 500, &recipient, 0x312);
+    // deficit 300 + buffer 200 = 500 divested → idle after payout = 200
+    assert_eq!(TokenClient::new(&env, &s.token).balance(&recipient), 500);
+    assert_eq!(TokenClient::new(&env, &s.token).balance(&s.pool_id), 200);
+    assert_eq!(s.vault_client.balance(&s.pool_id), 500);
+    assert_eq!(s.pool.get_liabilities(), 700);
+}
+
+#[test]
+fn withdrawal_fails_when_vault_divest_fails() {
+    let env = test_env();
+    let s = setup_yield_pool(&env);
+    do_deposit(&env, &s, 600, 0x320);
+    do_deposit(&env, &s, 600, 0x321);
+    s.vault_client.set_fail_withdraws(&true);
+    let recipient = Address::generate(&env);
+    let liabilities_before = s.pool.get_liabilities();
+    let res = try_withdraw_expect_err(&env, &s, 500, &recipient, 0x322);
+    assert!(res); // errored
+    assert_eq!(s.pool.get_liabilities(), liabilities_before);
+    assert_eq!(TokenClient::new(&env, &s.token).balance(&recipient), 0);
 }
