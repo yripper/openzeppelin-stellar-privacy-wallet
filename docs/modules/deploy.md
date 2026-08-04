@@ -2,13 +2,20 @@
 
 > **Living document.** Read this before modifying the module. Update it in the same change whenever the module's behavior, endpoints, files, or dependencies change.
 
-**Source:** `railway/`, `app/server.mjs` · **Last verified:** 2026-08-04 (C-signer fork deploy: fetch-spp-dist build step + .railwayignore, GitHub remote now exists)
+**Source:** `railway/`, `app/server.mjs` · **Last verified:** 2026-08-04 (C-signer fork deploy: fetch-spp-dist build step + .railwayignore, GitHub remote now exists; yield-shielded-pool feature — worker deploys need a backfill re-run first, see Gotchas)
 
 ## Purpose
 
 Task 13 — puts the three app-layer processes (`api`, `worker`, `app`) and a
 managed Postgres on the public internet via Railway, deployed from the local
-checkout (`railway up`, no GitHub connection — this repo has no git remote).
+checkout (`railway up`). **Correction (2026-08-04): this section previously
+claimed the repo had no git remote — that was true only for the original
+Task 13 deploy.** A public GitHub remote now exists
+(`https://github.com/yripper/openzeppelin-stellar-privacy-wallet.git`,
+verified via `git remote -v`) and is load-bearing: `railway/app.json`'s
+build fetches the vendored SPP SDK's `dist/` from it (see that file's row
+below and its Gotchas entry) — **push to GitHub before running `railway up`
+for the `app` service**, or the build fetches a stale `dist/`.
 `api`/`worker` build straight from `api/dist/{server,worker}.js` (Task 9/7);
 `app` is the built Vite SPA (Task 10-12) served by a small dependency-free
 static file server, `app/server.mjs`, that sets the same COOP/COEP headers
@@ -49,6 +56,7 @@ Each service's Railway "Config File" setting (GraphQL `ServiceInstanceUpdateInpu
 
 ## Gotchas & invariants
 
+- **Deploying the yield-shielded-pool feature's `worker` change requires re-running the SPP backfill against the PROD database BEFORE `railway up --service worker`, not after.** `api/src/worker.ts`'s `buildSppContractIds()` changed (`TESTNET.spp.pool` repointed to the yield fork, `TESTNET.spp.poolLegacy` added — `docs/modules/api.md`'s "Second required migration step" section has the full mechanism), which changes the SPP stream's `cursors` key. Deploying the new `worker` build against a DB still keyed under the OLD contract set means its first tick sees no cursor for the new key, defaults to bootnode mode, and hits Nethermind's dead public bootnode on every tick — a silent, permanent stall of SPP ingestion (no crash, no visible error beyond a repeating log line), not a one-time hiccup that self-heals. Required order: recreate the transient Postgres TCP proxy (see the Redeploy runbook below), run `api/scripts/backfill-spp.ts` against prod (regenerates `api/fixtures/spp-backfill.json`, currently stale — it still reflects the pre-repoint 4-contract state), run `pnpm --filter @privacy-wallet/api backfill:spp:load` against prod, delete the proxy, THEN `railway up --service worker`.
 - **Railway CLI v5.27.2's `railway environment edit --service-config <svc> <path> <value>` dot-path editor silently no-ops on unrecognized paths** (confirmed live: `build.configFilePath "..."` returned `{"committed":false,"message":"No changes to apply"}` and never appeared in `railway environment config --json`). The real field is `railwayConfigFile` on `ServiceInstanceUpdateInput` (confirmed via GraphQL schema introspection, `__type(name: "ServiceInstanceUpdateInput")`), set through the `serviceInstanceUpdate(serviceId, environmentId, input)` mutation — not exposed by the CLI's dot-path editor as of this version. Set directly via GraphQL for all three services; verified afterward via `railway environment config --json`, which surfaces it back as `services.<id>.configFile`.
 - **This CLI session authenticates via OAuth (`accessToken`/`refreshToken` in `~/.railway/config.json`), not a static API token** (`.user.token` is `null`). The Railway MCP server's mutation tools (`create_project`, `update_service`, etc.) and the `use-railway` skill's own `scripts/railway-api.sh` helper both read `.user.token` and failed with "Unauthorized" for this session, even though the CLI itself (`railway whoami`, `railway up`, …) worked fine and MCP's read-only list calls (`list_projects`, `list_workspaces`) also worked. Every mutation in this deploy went through the `railway` CLI directly, or — for the one GraphQL-only field above — a one-off `curl` using `.user.accessToken` as the bearer token.
 - **`RAILPACK_NODE_VERSION=22` is pinned** on `api`/`worker`/`app` because Railway's Railpack builder defaulted to Node 24 (confirmed live), and a quick local repro under Node 24.12.0 found `node api/dist/server.js` crashing inside `node:internal/util/inspect` (not this repo's code) when `console.error`-formatting the `ZodError` `loadEnv()` throws for a **missing** `DATABASE_URL` — a Node-version-specific `util.inspect` regression, not reachable in production (`DATABASE_URL` is always set via the Postgres reference variable) but pinned to the tested Node 22 line as a defensive measure anyway, matching the repo's `engines.node: ">=22"` (`package.json:6`) and this task's own local verification (`node -v` → `v24.12.0` locally, but the repo's build/test history is against 22.x per `CLAUDE.md`/prior task reports).
