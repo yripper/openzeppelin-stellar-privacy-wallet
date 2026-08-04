@@ -239,6 +239,16 @@ pre-fork notes stay visible/spendable through our indexer — new deposits go
 to the yield pool above. Full deployment record:
 `contracts/deployments/pool-yield-testnet.json`.
 
+**Live verification (testnet).** End-to-end flow verified on testnet (wallet
+`CCLBXDQJ…MGTPT3`):
+
+- Register public key: [`9652c643…`](https://stellar.expert/explorer/testnet/tx/9652c6435ce696100868deb77049d46417475faa5d253084b8453c2e1f4714fc)
+- Shield 600 XLM #1: [`544f08b8…`](https://stellar.expert/explorer/testnet/tx/544f08b81018e8b88fdd6f6712d4540cabde873c8595c79027436c4e9afb67d7)
+- Shield 600 XLM #2 (triggers batched 1000 XLM invest into DeFindex): [`6ecb31c8…`](https://stellar.expert/explorer/testnet/tx/6ecb31c8023c4b8c254a990e98bff856d81522191cdfa26a1f0dfc798fa15ebb)
+- Unshield 900 XLM (divest-on-demand in same tx): [`959ad5e5…`](https://stellar.expert/explorer/testnet/tx/959ad5e53cfc7395588034b093fbec77e1f6e7014d6f2d426125013af7aa8cdc)
+- `harvest()` on vault's fixed-APR strategy (permissionless, realizes yield): [`ef1246eb…`](https://stellar.expert/explorer/testnet/tx/ef1246eb4d6cd017a0fb419f022478dd137afceca524e07bfa08639b1bb7bd92)
+- `collect_yield` (paid 17,131 stroops surplus to admin, verified via transfer event): [`8b24ecf3…`](https://stellar.expert/explorer/testnet/tx/8b24ecf3cb9dad2ec97a5aae71fc487b7a6761e7522e52a5e5523f87f7ab6be0) — payout was small (0.0017131 XLM) because the demo ran minutes after deployment; the mechanism, not the amount, is the point.
+
 ## Monorepo layout
 
 ```
