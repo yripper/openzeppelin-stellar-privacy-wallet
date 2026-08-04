@@ -85,6 +85,7 @@ struct TestSetup {
     asp_non_membership_address: Address,
     asp_membership_client: ASPMembershipClient<'static>,
     asp_non_membership_client: ASPNonMembershipClient<'static>,
+    vault: Address,
 }
 
 /// Creates and deploys all contracts needed for testing
@@ -111,6 +112,7 @@ fn setup_test_contracts(env: &Env) -> TestSetup {
         asp_non_membership_address,
         asp_membership_client,
         asp_non_membership_client,
+        vault: Address::generate(env),
     }
 }
 
@@ -132,6 +134,9 @@ fn register_pool(
             maximum_deposit_amount,
             levels,
             policy_flags,
+            setup.vault.clone(),
+            1_000i128,
+            200i128,
         ),
     )
 }
@@ -1031,4 +1036,31 @@ fn test_pool_events_exact_shapes() {
 
     let expected_nullifier = NewNullifierEvent { nullifier }.to_xdr(&env, &contract_id);
     assert_eq!(events.events()[1], expected_nullifier);
+}
+
+#[test]
+fn yield_constructor_stores_vault_and_params() {
+    let env = test_env();
+    let setup = setup_test_contracts(&env);
+    let pool_id = register_pool(&env, &setup, U256::from_u32(&env, 1000), 3, policy::BLOCKLIST_BIT);
+    let pool = PoolContractClient::new(&env, &pool_id);
+    assert_eq!(pool.get_vault(), setup.vault);
+    assert_eq!(pool.get_invest_params(), (1_000i128, 200i128));
+    assert_eq!(pool.get_liabilities(), 0i128);
+}
+
+#[test]
+#[should_panic] // constructor errors abort registration: buffer == threshold is invalid
+fn yield_constructor_rejects_buffer_not_below_threshold() {
+    let env = test_env();
+    let setup = setup_test_contracts(&env);
+    env.register(
+        PoolContract,
+        (
+            setup.admin.clone(), setup.token.clone(), setup.verifier.clone(),
+            setup.asp_membership_address.clone(), setup.asp_non_membership_address.clone(),
+            U256::from_u32(&env, 1000), 3u32, policy::BLOCKLIST_BIT,
+            setup.vault.clone(), 200i128, 200i128,
+        ),
+    );
 }

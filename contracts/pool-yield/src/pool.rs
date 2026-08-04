@@ -58,6 +58,10 @@ pub enum Error {
     NonCanonicalPublicInput = 13,
     /// Unsupported policy flag bits.
     InvalidPolicyFlags = 14,
+    /// Invest threshold/buffer parameters are invalid
+    InvalidInvestParams = 15,
+    /// Divesting from the DeFindex vault failed or could not cover a withdrawal
+    VaultDivestFailed = 16,
 }
 
 /// Conversion from MerkleTreeWithHistory errors to pool contract errors
@@ -162,6 +166,28 @@ pub trait CircomGroth16VerifierInterface {
     ) -> Result<bool, Groth16Error>;
 }
 
+#[contractclient(crate_path = "soroban_sdk", name = "DefindexVaultClient")]
+pub trait DefindexVaultInterface {
+    fn deposit(
+        env: Env,
+        amounts_desired: Vec<i128>,
+        amounts_min: Vec<i128>,
+        from: Address,
+        invest: bool,
+    ) -> Result<soroban_sdk::Val, soroban_sdk::Error>;
+    fn withdraw(
+        env: Env,
+        withdraw_shares: i128,
+        min_amounts_out: Vec<i128>,
+        from: Address,
+    ) -> Result<Vec<i128>, soroban_sdk::Error>;
+    fn balance(env: Env, id: Address) -> Result<i128, soroban_sdk::Error>;
+    fn get_asset_amounts_per_shares(
+        env: Env,
+        vault_shares: i128,
+    ) -> Result<Vec<i128>, soroban_sdk::Error>;
+}
+
 /// Storage keys for contract persistent data
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -182,6 +208,14 @@ pub(crate) enum DataKey {
     ASPNonMembership,
     /// Pool ASP policy flags (bitset; see `crate::policy`).
     PolicyFlags,
+    /// DeFindex vault address (the vault contract is also the SEP-41 share token)
+    Vault,
+    /// Idle-balance level (stroops) that triggers investing into the vault
+    InvestThreshold,
+    /// Idle stroops kept out of the vault so withdrawals rarely divest
+    LiquidityBuffer,
+    /// Note-backed stroops (Σ deposits − Σ withdrawals); collect_yield can never pay below this
+    TotalLiabilities,
 }
 
 /// Event emitted when a new commitment is added to the Merkle tree
@@ -253,6 +287,9 @@ impl PoolContract {
         maximum_deposit_amount: U256,
         levels: u32,
         policy_flags: u32,
+        vault: Address,
+        invest_threshold: i128,
+        liquidity_buffer: i128,
     ) -> Result<(), Error> {
         if !policy::is_valid(policy_flags) {
             return Err(Error::InvalidPolicyFlags);
@@ -274,6 +311,18 @@ impl PoolContract {
         env.storage()
             .persistent()
             .set(&DataKey::PolicyFlags, &policy_flags);
+
+        if invest_threshold <= 0 || liquidity_buffer < 0 || liquidity_buffer >= invest_threshold {
+            return Err(Error::InvalidInvestParams);
+        }
+        env.storage().persistent().set(&DataKey::Vault, &vault);
+        env.storage()
+            .persistent()
+            .set(&DataKey::InvestThreshold, &invest_threshold);
+        env.storage()
+            .persistent()
+            .set(&DataKey::LiquidityBuffer, &liquidity_buffer);
+        env.storage().persistent().set(&DataKey::TotalLiabilities, &0i128);
 
         // Initialize the Merkle tree for commitment storage
         MerkleTreeWithHistory::init(&env, levels)?;
@@ -728,6 +777,38 @@ impl PoolContract {
     pub fn is_spent(env: &Env, n: &U256) -> Result<bool, Error> {
         let key = DataKey::Nullifier(n.clone());
         Ok(env.storage().persistent().has(&key))
+    }
+
+    /// DeFindex vault this pool invests idle liquidity into.
+    pub fn get_vault(env: &Env) -> Result<Address, Error> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::Vault)
+            .ok_or(Error::NotInitialized)
+    }
+
+    /// (invest_threshold, liquidity_buffer) in stroops.
+    pub fn get_invest_params(env: &Env) -> Result<(i128, i128), Error> {
+        let threshold = env
+            .storage()
+            .persistent()
+            .get(&DataKey::InvestThreshold)
+            .ok_or(Error::NotInitialized)?;
+        let buffer = env
+            .storage()
+            .persistent()
+            .get(&DataKey::LiquidityBuffer)
+            .ok_or(Error::NotInitialized)?;
+        Ok((threshold, buffer))
+    }
+
+    /// Note-backed stroops. Everything above this (idle + vault position) is yield.
+    pub fn get_liabilities(env: &Env) -> Result<i128, Error> {
+        Ok(env
+            .storage()
+            .persistent()
+            .get(&DataKey::TotalLiabilities)
+            .unwrap_or(0i128))
     }
 
     /// Update the contract administrator
