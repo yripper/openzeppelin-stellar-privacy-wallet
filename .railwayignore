@@ -39,3 +39,8 @@ vendor/stellar-private-payments/sdk/tests/
 vendor/stellar-private-payments/sdk/tx-planner/
 vendor/stellar-private-payments/sdk/types/
 vendor/stellar-private-payments/sdk/witness/
+
+# contracts/pool-yield's Rust build output — not needed by any deployed
+# service (they consume the deployed contract by ID from config, not by
+# building it) and dwarfs the upload cap on its own (2GB+ of target/).
+contracts/pool-yield/target/
