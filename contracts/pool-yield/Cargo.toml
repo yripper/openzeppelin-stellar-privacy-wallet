@@ -1,0 +1,33 @@
+[package]
+name = "pool-yield"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+publish = false
+
+[workspace]
+
+[lib]
+crate-type = ["lib", "cdylib"]
+doctest = false
+
+[dependencies]
+contract-types = { path = "../../vendor/stellar-private-payments/contracts/types" }
+soroban-utils = { path = "../../vendor/stellar-private-payments/contracts/soroban-utils" }
+soroban-sdk = { version = "27", default-features = false, features = ["hazmat"] }
+
+[dev-dependencies]
+asp-membership = { path = "../../vendor/stellar-private-payments/contracts/asp-membership" }
+asp-non-membership = { path = "../../vendor/stellar-private-payments/contracts/asp-non-membership" }
+circom-groth16-verifier = { path = "../../vendor/stellar-private-payments/contracts/circom-groth16-verifier" }
+soroban-sdk = { version = "27", default-features = false, features = ["hazmat", "testutils"] }
+
+[profile.release]
+opt-level = "z"
+overflow-checks = true
+debug = 0
+strip = "symbols"
+debug-assertions = false
+panic = "abort"
+codegen-units = 1
+lto = true
