@@ -1,0 +1,18 @@
+# Keep `railway up` uploads under the size limit.
+#
+# The vendored SPP SDK fork (vendor/stellar-private-payments) is ~110MB of
+# Rust workspace + build artifacts, but deployed services only need the npm
+# package the app installs as a file: dependency —
+# vendor/stellar-private-payments/sdk/web (package.json + js/ + dist/).
+# Everything else in the vendor tree is reference source for humans and the
+# local wasm rebuild, never read by a Railway build.
+vendor/stellar-private-payments/*
+!vendor/stellar-private-payments/sdk
+vendor/stellar-private-payments/sdk/*
+!vendor/stellar-private-payments/sdk/web
+!vendor/stellar-private-payments/UPSTREAM.md
+
+# Gitignored anyway, but be explicit: never upload the reference clones or
+# the Rust target cache (vendor/*/target is a symlink into resources/).
+resources/
+vendor/stellar-private-payments/target
