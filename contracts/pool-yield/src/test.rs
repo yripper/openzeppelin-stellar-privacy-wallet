@@ -1064,3 +1064,137 @@ fn yield_constructor_rejects_buffer_not_below_threshold() {
         ),
     );
 }
+
+mod mock_verifier {
+    use contract_types::{Groth16Error, Groth16Proof};
+    use soroban_sdk::{Env, Vec, contract, contractimpl, crypto::bn254::Bn254Fr};
+
+    #[contract]
+    pub struct MockVerifier;
+
+    #[contractimpl]
+    impl MockVerifier {
+        pub fn verify(
+            _env: Env,
+            _proof: Groth16Proof,
+            _public_inputs: Vec<Bn254Fr>,
+        ) -> Result<bool, Groth16Error> {
+            Ok(true)
+        }
+    }
+}
+
+use soroban_sdk::token::{StellarAssetClient, TokenClient};
+
+struct YieldSetup {
+    admin: Address,
+    token: Address,
+    token_admin: StellarAssetClient<'static>,
+    vault: Address,          // Address::generate here; real MockVault replaces it in Task 4
+    pool_id: Address,
+    pool: PoolContractClient<'static>,
+    member_root: U256,
+    non_member_root: U256,
+    sender: Address,
+}
+
+/// Pool with MockVerifier + real SAC token, threshold 1000 / buffer 200,
+/// policy BLOCKLIST_BIT (mirrors the live deployment), levels 4, sender
+/// funded with 100_000 units.
+fn setup_yield_pool(env: &Env) -> YieldSetup {
+    env.mock_all_auths();
+    let base = setup_test_contracts(env);
+    let sac = env.register_stellar_asset_contract_v2(base.admin.clone());
+    let token = sac.address();
+    let token_admin = StellarAssetClient::new(env, &token);
+    let verifier = env.register(mock_verifier::MockVerifier, ());
+    let vault = Address::generate(env);
+    let pool_id = env.register(
+        PoolContract,
+        (
+            base.admin.clone(), token.clone(), verifier,
+            base.asp_membership_address.clone(), base.asp_non_membership_address.clone(),
+            U256::from_u32(env, 100_000), 4u32, policy::BLOCKLIST_BIT,
+            vault.clone(), 1_000i128, 200i128,
+        ),
+    );
+    let pool = PoolContractClient::new(env, &pool_id);
+    let (member_root, non_member_root) = (
+        base.asp_membership_client.get_root(),
+        base.asp_non_membership_client.get_root(),
+    );
+    let sender = Address::generate(env);
+    token_admin.mint(&sender, &100_000i128);
+    YieldSetup { admin: base.admin, token, token_admin, vault, pool_id, pool, member_root, non_member_root, sender }
+}
+
+/// Successful deposit through the full transact path (MockVerifier accepts).
+/// `nullifier` must be unique per call.
+fn do_deposit(env: &Env, s: &YieldSetup, amount: i128, nullifier: u32) {
+    let ext = ExtData {
+        recipient: s.sender.clone(),
+        ext_amount: I256::from_i128(env, amount),
+        encrypted_output0: Bytes::new(env),
+        encrypted_output1: Bytes::new(env),
+    };
+    let public_amount = U256::from_be_bytes(env, &ext.ext_amount.to_be_bytes());
+    let proof = Proof {
+        proof: mk_mock_groth16_proof(env),
+        root: s.pool.get_root(),
+        input_nullifiers: {
+            let mut v: Vec<U256> = Vec::new(env);
+            v.push_back(U256::from_u32(env, nullifier));
+            v
+        },
+        output_commitment0: U256::from_u32(env, nullifier.wrapping_mul(2)),
+        output_commitment1: U256::from_u32(env, nullifier.wrapping_mul(2) + 1),
+        public_amount,
+        ext_data_hash: compute_ext_hash(env, &ext),
+        asp_membership_root: s.member_root.clone(),
+        asp_non_membership_root: s.non_member_root.clone(),
+    };
+    s.pool.transact(&proof, &ext, &s.sender);
+}
+
+/// Successful withdrawal: public_amount = field − amount.
+fn do_withdraw(env: &Env, s: &YieldSetup, amount: i128, recipient: &Address, nullifier: u32) {
+    let ext = ExtData {
+        recipient: recipient.clone(),
+        ext_amount: I256::from_i32(env, 0).sub(&I256::from_i128(env, amount)),
+        encrypted_output0: Bytes::new(env),
+        encrypted_output1: Bytes::new(env),
+    };
+    let abs = U256::from_be_bytes(env, &I256::from_i128(env, amount).to_be_bytes());
+    let public_amount = bn256_modulus(env).sub(&abs);
+    let proof = Proof {
+        proof: mk_mock_groth16_proof(env),
+        root: s.pool.get_root(),
+        input_nullifiers: {
+            let mut v: Vec<U256> = Vec::new(env);
+            v.push_back(U256::from_u32(env, nullifier));
+            v
+        },
+        output_commitment0: U256::from_u32(env, nullifier.wrapping_mul(2)),
+        output_commitment1: U256::from_u32(env, nullifier.wrapping_mul(2) + 1),
+        public_amount,
+        ext_data_hash: compute_ext_hash(env, &ext),
+        asp_membership_root: s.member_root.clone(),
+        asp_non_membership_root: s.non_member_root.clone(),
+    };
+    s.pool.transact(&proof, &ext, recipient);
+}
+
+#[test]
+fn liabilities_track_deposits_and_withdrawals() {
+    let env = test_env();
+    let s = setup_yield_pool(&env);
+    do_deposit(&env, &s, 500, 0x100);
+    assert_eq!(s.pool.get_liabilities(), 500);
+    assert_eq!(TokenClient::new(&env, &s.token).balance(&s.pool_id), 500);
+    do_deposit(&env, &s, 300, 0x101);
+    assert_eq!(s.pool.get_liabilities(), 800);
+    let recipient = Address::generate(&env);
+    do_withdraw(&env, &s, 200, &recipient, 0x102);
+    assert_eq!(s.pool.get_liabilities(), 600);
+    assert_eq!(TokenClient::new(&env, &s.token).balance(&recipient), 200);
+}

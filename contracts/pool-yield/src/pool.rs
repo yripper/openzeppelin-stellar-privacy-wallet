@@ -667,6 +667,7 @@ impl PoolContract {
             let abs = zero.sub(&ext_data.ext_amount);
             let amount: i128 = Self::i256_to_i128_nonneg(env, &abs)?;
             token_client.transfer(&this, &ext_data.recipient, &amount);
+            Self::sub_liabilities(env, amount);
         }
 
         // 9. Insert new commitments into Merkle tree
@@ -690,6 +691,13 @@ impl PoolContract {
             encrypted_output: ext_data.encrypted_output1.clone(),
         }
         .publish(env);
+
+        // Yield fork: balance-sheet accounting + batched vault invest.
+        if ext_data.ext_amount > zero {
+            let amount = Self::i256_to_i128_nonneg(env, &ext_data.ext_amount)?;
+            Self::add_liabilities(env, amount)?;
+            Self::maybe_invest(env);
+        }
 
         Ok(())
     }
@@ -810,6 +818,26 @@ impl PoolContract {
             .get(&DataKey::TotalLiabilities)
             .unwrap_or(0i128))
     }
+
+    /// Record a deposit's note-backed stroops.
+    fn add_liabilities(env: &Env, amount: i128) -> Result<(), Error> {
+        let cur = Self::get_liabilities(env)?;
+        let next = cur.checked_add(amount).ok_or(Error::Overflow)?;
+        env.storage().persistent().set(&DataKey::TotalLiabilities, &next);
+        Ok(())
+    }
+
+    /// Release a withdrawal's note-backed stroops.
+    ///
+    /// Saturating: a pre-fork accounting gap must never brick withdrawals.
+    fn sub_liabilities(env: &Env, amount: i128) {
+        let cur = Self::get_liabilities(env).unwrap_or(0);
+        let next = (cur - amount).max(0);
+        env.storage().persistent().set(&DataKey::TotalLiabilities, &next);
+    }
+
+    /// Batched vault investing. Real body in the invest task.
+    fn maybe_invest(_env: &Env) {}
 
     /// Update the contract administrator
     ///
