@@ -1,6 +1,6 @@
 {
   "name": "stellar-private-payments",
-  "version": "0.1.0-alpha.1-csigner.1",
+  "version": "0.1.0-alpha.1-csigner.2",
   "description": "Stellar Private Payments browser SDK (alpha)",
   "license": "Apache-2.0",
   "type": "module",
