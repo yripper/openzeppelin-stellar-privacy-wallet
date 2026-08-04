@@ -19,6 +19,9 @@ pub struct Account<S: Storage> {
     storage: S,
     prover: Handle<dyn Prover>,
     user_address: String,
+    /// Classic `G…` envelope source when `user_address` is not a classic
+    /// account (see `PrivatePoolConfig::tx_source`).
+    tx_source: Option<String>,
     signer: Handle<dyn Signer>,
     sync: SyncHandle,
     contract_config: ContractConfig,
@@ -30,6 +33,7 @@ impl<S: Storage> Account<S> {
         storage: S,
         prover: Handle<dyn Prover>,
         user_address: String,
+        tx_source: Option<String>,
         signer: Handle<dyn Signer>,
         sync: SyncHandle,
         contract_config: ContractConfig,
@@ -39,6 +43,7 @@ impl<S: Storage> Account<S> {
             storage,
             prover,
             user_address,
+            tx_source,
             signer,
             sync,
             contract_config,
@@ -47,6 +52,12 @@ impl<S: Storage> Account<S> {
 
     pub fn user_address(&self) -> &str {
         &self.user_address
+    }
+
+    /// The classic account the register envelope is built for: `tx_source`
+    /// when set, else `user_address`.
+    fn envelope_source(&self) -> &str {
+        self.tx_source.as_deref().unwrap_or(&self.user_address)
     }
 
     pub fn signer(&self) -> &Handle<dyn Signer> {
@@ -137,10 +148,16 @@ impl<S: Storage> Account<S> {
         let fetcher = StateFetcher::new(self.rpc.clone(), self.contract_config.clone())
             .map_err(|e| Error::Other(format!("state fetcher: {e:#}")))?;
         let prepared = fetcher
-            .prepare_register(&self.user_address, note_pk.0, enc_pk.0)
+            .prepare_register(self.envelope_source(), &self.user_address, note_pk.0, enc_pk.0)
             .await
             .map_err(|e| Error::Other(format!("prepare register: {e:#}")))?;
         let signed = self.signer.sign_soroban_transaction(&prepared).await?;
+        // An external signer (e.g. a smart-account relayer) may have already
+        // assembled and submitted the transaction itself; it reports the hash
+        // through the `submitted:` marker instead of a signed envelope.
+        if let Some(hash) = signed.signed_xdr.strip_prefix("submitted:") {
+            return confirm_tx(fetcher.rpc(), hash.to_string()).await;
+        }
         let envelope = TransactionEnvelope::from_xdr_base64(&signed.signed_xdr, Limits::none())
             .map_err(|e| Error::Other(format!("invalid signed transaction xdr: {e}")))?;
         let hash = submit_tx(fetcher.rpc(), &envelope)
@@ -155,6 +172,7 @@ impl<S: Storage> Account<S> {
             contract_config: self.contract_config.clone(),
             pool_contract_id: pool_contract_id.into(),
             user_address: self.user_address.clone(),
+            tx_source: self.tx_source.clone(),
         };
 
         PrivatePool::init(

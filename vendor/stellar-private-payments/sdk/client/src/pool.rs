@@ -248,6 +248,7 @@ impl<S: Storage> PrivatePool<S> {
             .prepare_pool_transact(
                 &chain_config.pool_contract_id,
                 &pool_transact_input(prepared),
+                chain_config.envelope_source(),
                 &chain_config.user_address,
             )
             .await
@@ -302,6 +303,13 @@ impl<S: Storage> PrivatePool<S> {
     }
 
     pub async fn submit(&self, signed_tx: SignedTransaction) -> Result<String, Error> {
+        // An external signer (e.g. a smart-account relayer) may have already
+        // assembled and submitted the transaction itself; it reports the hash
+        // through the `submitted:` marker instead of a signed envelope. The
+        // regular confirm loop then polls that hash as usual.
+        if let Some(hash) = signed_tx.signed_xdr.strip_prefix("submitted:") {
+            return Ok(hash.to_string());
+        }
         let envelope = TransactionEnvelope::from_xdr_base64(&signed_tx.signed_xdr, Limits::none())
             .map_err(|e| Error::Other(format!("invalid signed transaction xdr: {e}")))?;
 

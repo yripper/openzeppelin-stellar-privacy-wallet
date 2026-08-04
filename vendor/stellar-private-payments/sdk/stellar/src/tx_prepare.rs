@@ -22,11 +22,18 @@ pub struct PoolTransactInput {
 impl StateFetcher {
     /// Simulates `transact` and returns unsigned XDR + auth entries for the
     /// wallet.
+    ///
+    /// `source_account` (classic `G…`) sources the envelope and its sequence
+    /// number; `sender` is the pool-side identity passed as `transact`'s
+    /// `sender` argument. They were historically the same string, but `sender`
+    /// may be any Soroban `Address` — including a `C…` smart account — while
+    /// the envelope source must stay a classic account.
     pub async fn prepare_pool_transact(
         &self,
         pool_contract_id: &str,
         input: &PoolTransactInput,
         source_account: &str,
+        sender: &str,
     ) -> Result<PreparedSorobanTx> {
         self.enabled_pool_for(pool_contract_id)?;
         let proof_scval = pool_proof_to_scval(
@@ -42,9 +49,9 @@ impl StateFetcher {
         )?;
         let ext_scval = pool_ext_data_to_scval(&input.ext_data)?;
         let sender_scval = xdr::ScVal::Address(
-            source_account
+            sender
                 .parse()
-                .map_err(|e| anyhow!("invalid source account: {e}"))?,
+                .map_err(|e| anyhow!("invalid sender address: {e}"))?,
         );
 
         let seq = self.account_sequence(source_account).await?;
@@ -64,13 +71,18 @@ impl StateFetcher {
 
     /// Simulates `register` on the configured public key registry contract and
     /// returns unsigned XDR + auth entries for the wallet.
+    ///
+    /// `source_account` (classic `G…`) sources the envelope; `owner` is the
+    /// registered `Account.owner` `Address` and may be any strkey, including a
+    /// `C…` smart account.
     pub async fn prepare_register(
         &self,
         source_account: &str,
+        owner: &str,
         note_key: [u8; 32],
         encryption_key: [u8; 32],
     ) -> Result<PreparedSorobanTx> {
-        let account_scval = register_account_to_scval(source_account, encryption_key, note_key)?;
+        let account_scval = register_account_to_scval(owner, encryption_key, note_key)?;
 
         let seq = self.account_sequence(source_account).await?;
         let raw = Self::build_invoke_contract_tx_envelope(
@@ -265,6 +277,18 @@ mod tests {
         };
         assert_eq!(args.function_name.to_string(), "register");
         assert_eq!(args.args.len(), 1);
+    }
+
+    #[test]
+    fn transact_sender_scval_accepts_contract_address() {
+        // The `sender` argument is a generic Soroban Address: a C… smart
+        // account must encode as ScAddress::Contract while the envelope source
+        // remains a classic account. Guards the tx-source/sender split.
+        let c_addr = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4";
+        let scval = xdr::ScVal::Address(c_addr.parse().expect("contract address"));
+        let xdr::ScVal::Address(xdr::ScAddress::Contract(_)) = scval else {
+            panic!("expected contract-variant ScAddress");
+        };
     }
 
     #[test]

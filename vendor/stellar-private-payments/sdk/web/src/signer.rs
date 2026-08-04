@@ -206,6 +206,31 @@ impl Signer for WalletSigner {
         &self,
         prepared: &PreparedSorobanTx,
     ) -> Result<SignedTransaction, Error> {
+        // A signer exposing `executeTransaction` takes over assembly, auth
+        // signing, and submission of the prepared invocation itself (e.g. a
+        // smart-account wallet routing through its own relayer, where auth is
+        // a passkey-signed entry rather than an ed25519 envelope signature).
+        // It receives the unsigned tx XDR and resolves with the submitted tx
+        // hash, which travels back through the `submitted:` marker so the
+        // regular confirm loop can poll it.
+        if Reflect::has(&self.signer, &JsValue::from_str("executeTransaction")).unwrap_or(false) {
+            let hash = self
+                .call("executeTransaction", &[prepared.tx_xdr.as_str().into()])
+                .await
+                .map_err(wallet_sign_error)?;
+            let trimmed = hash.trim();
+            let valid =
+                trimmed.len() == 64 && trimmed.bytes().all(|b| b.is_ascii_hexdigit());
+            if !valid {
+                return Err(Error::Other(format!(
+                    "signer.executeTransaction must resolve with a 64-char hex tx hash, got: {trimmed:?}"
+                )));
+            }
+            return Ok(SignedTransaction {
+                signed_xdr: format!("submitted:{}", trimmed.to_lowercase()),
+            });
+        }
+
         let envelope = self
             .sign_prepared_transaction(prepared)
             .await

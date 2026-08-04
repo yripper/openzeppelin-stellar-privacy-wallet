@@ -75,6 +75,10 @@ pub struct Client {
 struct AccountOptions {
     network_passphrase: String,
     user_address: Option<String>,
+    /// Classic `G…` account that sources transaction envelopes when
+    /// `user_address` is not a classic account (e.g. a `C…` smart account).
+    /// JS key: `txSource`.
+    tx_source: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -213,7 +217,7 @@ impl Client {
             }
 
             Ok(Account::new(Rc::new(
-                self.open_native_account(wallet_signer, user_address)?,
+                self.open_native_account(wallet_signer, user_address, opts.tx_source)?,
             )))
         })
         .await
@@ -377,12 +381,15 @@ impl Client {
         &self,
         wallet_signer: WalletSigner,
         user_address: String,
+        tx_source: Option<String>,
     ) -> Result<NativeAccount<StorageBridge>, JsError> {
         let signer: Handle<dyn stellar_private_payments_sdk::Signer> = Handle::from_box(Box::new(
             wallet_signer,
         )
             as Box<dyn stellar_private_payments_sdk::Signer>);
-        self.inner.account(user_address, signer).map_err(pool_err)
+        self.inner
+            .account_with_tx_source(user_address, tx_source, signer)
+            .map_err(pool_err)
     }
 
     async fn user_keys_exist(&self, address: &str) -> Result<bool, JsError> {

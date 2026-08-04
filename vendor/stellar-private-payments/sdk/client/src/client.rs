@@ -143,11 +143,25 @@ impl<S: Storage> Client<S> {
         user_address: impl Into<String>,
         signer: Handle<dyn Signer>,
     ) -> Result<Account<S>, Error> {
+        self.account_with_tx_source(user_address, None, signer)
+    }
+
+    /// Create an [`Account`] session whose transaction envelopes are sourced
+    /// from a separate classic `G…` account. Required when `user_address` is
+    /// not a classic account (e.g. a `C…` smart account) and therefore cannot
+    /// carry a sequence number.
+    pub fn account_with_tx_source(
+        &self,
+        user_address: impl Into<String>,
+        tx_source: Option<String>,
+        signer: Handle<dyn Signer>,
+    ) -> Result<Account<S>, Error> {
         Ok(Account::new(
             self.rpc.clone(),
             self.storage.fork()?,
             self.prover.clone(),
             user_address.into(),
+            tx_source,
             signer,
             self.sync.clone(),
             self.contract_config.clone(),

@@ -27,6 +27,20 @@ pub struct PrivatePoolConfig {
     pub contract_config: ContractConfig,
     pub pool_contract_id: String,
     pub user_address: String,
+    /// Classic `G…` account that sources transaction envelopes (sequence
+    /// number + fees) when `user_address` is not itself a classic account —
+    /// e.g. a `C…` smart account whose transactions are assembled and
+    /// submitted externally. `None` keeps the historical behavior of sourcing
+    /// envelopes from `user_address`.
+    pub tx_source: Option<String>,
+}
+
+impl PrivatePoolConfig {
+    /// The classic account the envelope is built for: `tx_source` when set,
+    /// else `user_address`.
+    pub fn envelope_source(&self) -> &str {
+        self.tx_source.as_deref().unwrap_or(&self.user_address)
+    }
 }
 
 impl PrivatePoolConfig {
